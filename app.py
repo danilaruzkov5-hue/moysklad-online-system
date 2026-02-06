@@ -28,7 +28,7 @@ def init_db():
 init_db()
 
 st.set_page_config(layout="wide", page_title="Складской Терминал")
-
+st.write(f"Текущая база: {st.secrets.get('DB_URL', 'НЕ ПОДКЛЮЧЕНО (Использую временную)')[:20]}...")
 # --- API МОЙСКЛАД ---
 def load_api_data():
     url = f"https://api.moysklad.ru/api/remap/1.2/report/stock/all?limit=1000&filter=store=https://api.moysklad.ru/api/remap/1.2/entity/store/{STORE_ID}"
@@ -139,5 +139,6 @@ with t5:
         res = df_all.groupby("barcode")["quantity"].sum().reset_index()
         res.columns = ["Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
