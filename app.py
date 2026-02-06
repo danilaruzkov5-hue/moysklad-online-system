@@ -168,25 +168,21 @@ with tab3:
                     st.error("Выдели товары галочками!")
 
         with col_arch2:
-            # Функция для конвертации архива в Excel
-            @st.cache_data
-            def convert_df_to_excel(df):
-                import io
-                output = io.BytesIO()
-                # Удаляем uuid перед выгрузкой, чтобы не пугать заказчика лишними кодами
-                clean_df = df.drop(columns=['uuid']) if 'uuid' in df.columns else df
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    clean_df.to_excel(writer, index=False, sheet_name='Отгрузка')
-                return output.getvalue()
-
-            excel_data = convert_df_to_excel(st.session_state.archive)
+            # Конвертируем в CSV (текстовый формат, понятный любому компьютеру)
+            # Удаляем технический uuid перед выгрузкой
+            df_export = st.session_state.archive.copy()
+            if 'uuid' in df_export.columns:
+                df_export = df_export.drop(columns=['uuid'])
             
+            # Кодировка utf-8-sig нужна, чтобы Excel на Mac/Windows понимал русский язык
+            csv_data = df_export.to_csv(index=False).encode('utf-8-sig')
+
             st.download_button(
-                label="📥 СКАЧАТЬ АРХИВ (EXCEL)",
-                data=excel_data,
-                file_name="otgruzka_sklad.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                label="📥 СКАЧАТЬ АРХИВ (CSV/EXCEL)",
+                data=csv_data,
+                file_name="otgruzka_sklad.csv",
+                mime="text/csv",
                 use_container_width=True
             )
     else:
-        st.info("Архив пуст")
+        st.info("Архив пуст. Отгрузи товары, чтобы они появились здесь.")
