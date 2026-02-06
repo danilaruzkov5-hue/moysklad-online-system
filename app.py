@@ -4,7 +4,7 @@ import math
 import requests
 
 # --- КОНСТАНТЫ ---
-TOKEN = "bdcc5b722dd8bad73b205be6fff08267da7c121a"
+TOKEN = "4cbd6f585d0c15ea2506a6f82fbdb8a69a49c422"
 ORG_ID = "da0e7ea9-d216-11ec-0a80-08be00007acc" 
 STORE_ID = "da0f3443-d216-11ec-0a80-08be00007ace"    
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
@@ -143,6 +143,7 @@ with tab3:
             st.rerun()
     else:
         st.info("Архив пока пуст")
+
 
 
 
