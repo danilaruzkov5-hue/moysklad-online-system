@@ -85,14 +85,12 @@ def render_tab(storage_type_filter, key_suffix):
     mask = st.session_state.df['Направление(склад)'].str.contains(storage_type_filter, na=False)
     filtered_df = st.session_state.df[mask]
     
-    if search_query:
-        sq = str(search_query).lower()
-        filtered_df = filtered_df[
-            filtered_df['Баркод товара(штрихкод)'].astype(str).str.contains(sq) | 
-            filtered_df['Порядковый номер короба склада'].astype(str).str.contains(sq) |
-            filtered_df['Артикул'].astype(str).lower().str.contains(sq)
-        ]
-
+    if sq:
+            filtered_df = filtered_df[
+                filtered_df['Баркод товара(штрихкод)'].astype(str).str.contains(sq) |
+                filtered_df['Артикул'].astype(str).str.contains(sq) |
+                filtered_df['Наименование'].astype(str).str.contains(sq)
+            ]
     st.subheader(f"Остатки {key_suffix}")
     if filtered_df.empty:
         st.info("В этой категории товаров нет")
@@ -143,5 +141,6 @@ with tab3:
                     st.session_state.archive = st.session_state.archive.drop(st.session_state.archive.index[idx]).reset_index(drop=True)
                     save_data()
                     st.rerun()
+
 
 
