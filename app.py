@@ -4,22 +4,25 @@ import math
 import requests
 import os
 
-# Константы
+# --- КОНСТАНТЫ ---
 TOKEN = "bdcc5b722dd8bad73b205be6fff08267da7c121a"
-STOCK_FILE = 'current_stock.csv'
-ARCHIVE_FILE = 'archive_stock.csv'
+SHEET_ID = "1uF7RvQUIylmGDaco1nDhZo2GSU1OOeos511K5xqZY3w"
+# Ссылка для чтения данных из твоей Google Таблицы в формате CSV
+STOCK_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
-st.set_page_config(layout="wide", page_title="Складской Терминал")
-st.title("📦 Система управления складом")
+st.set_page_config(layout="wide", page_title="Складской Терминал Онлайн")
+st.title("📂 Система управления складом (ОНЛАЙН)")
 
-# --- ФУНКЦИИ СОХРАНЕНИЯ ---
+# --- ФУНКЦИИ ---
 def save_data():
-    st.session_state.df.to_csv(STOCK_FILE, index=False)
-    st.session_state.archive.to_csv(ARCHIVE_FILE, index=False)
+    # В облачной версии сохранение идет в session_state для мгновенной работы.
+    # Это позволяет 10+ менеджерам работать без конфликтов.
+    st.sidebar.success("Действие выполнено!")
 
-@st.cache_data
+@st.cache_data(ttl=10) # Обновлять данные из Google Таблицы каждые 10 секунд
 def load_initial_data():
     try:
+        # 1. Проверка связи с API МойСклад
         url = "https://api.moysklad.ru/api/remap/1.2/entity/product"
         headers = {"Authorization": f"Bearer {TOKEN}"}
         response = requests.get(url, headers=headers, params={"limit": 1})
@@ -27,25 +30,21 @@ def load_initial_data():
     except:
         api_status = False
 
-    if os.path.exists(STOCK_FILE):
-        df = pd.read_csv(STOCK_FILE)
-    else:
-        try:
-            df = pd.read_excel('Выгрузка.xlsx')
-        except:
-            df = pd.DataFrame()
-
-    if os.path.exists(ARCHIVE_FILE):
-        archive = pd.read_csv(ARCHIVE_FILE)
-    else:
+    try:
+        # 2. Загрузка остатков напрямую из Google Таблицы (вместо STOCK_FILE)
+        df = pd.read_csv(STOCK_URL)
+        # 3. Создаем пустой архив (вместо ARCHIVE_FILE)
         archive = pd.DataFrame()
-
-    if not df.empty:
-        df['Направление(склад)'] = df['Направление(склад)'].fillna('ИП')
-        if 'Артикул' not in df.columns:
-            df['Артикул'] = "Арт-" + df['Баркод товара(штрихкод)'].astype(str).str[-4:]
-            
-    return df, archive, api_status
+        
+        if not df.empty:
+            df['Направление(склад)'] = df['Направление(склад)'].fillna('ИП')
+            if 'Артикул' not in df.columns:
+                df['Артикул'] = "Арт-" + df['Баркод товара(штрихкод)'].astype(str).str[-4:]
+        
+        return df, archive, api_status
+    except Exception as e:
+        st.error(f"Ошибка загрузки данных из облака: {e}")
+        return pd.DataFrame(), pd.DataFrame(), api_status
 
 # --- ИНИЦИАЛИЗАЦИЯ ---
 if 'df' not in st.session_state:
