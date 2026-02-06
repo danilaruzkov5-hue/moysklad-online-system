@@ -24,14 +24,29 @@ def save_data(item_data=None):
 
 @st.cache_data(ttl=10) # Обновлять данные из Google Таблицы каждые 10 секунд
 def load_initial_data():
+    # Запрашиваем реальные остатки из МойСклад
+    url = "https://api.moysklad.ru/api/remap/1.2/report/stock/all"
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+    
     try:
-        # 1. Проверка связи с API МойСклад
-        url = "https://api.moysklad.ru/api/remap/1.2/entity/product"
-        headers = {"Authorization": f"Bearer {TOKEN}"}
-        response = requests.get(url, headers=headers, params={"limit": 1})
-        api_status = response.status_code == 200
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            # Превращаем JSON из МойСклад в таблицу Pandas
+            rows = []
+            for item in data.get('rows', []):
+                rows.append({
+                    "Наименование": item.get('name'),
+                    "Артикул": item.get('article', ''),
+                    "Баркод товара(штрихкод)": item.get('code', ''),
+                    "Кол-во": item.get('stock', 0),
+                    "Направление(склад)": "ИП" if "ИП" in item.get('name', '') else "ООО"
+                })
+            df = pd.DataFrame(rows)
+            return df, pd.DataFrame(), True
     except:
-        api_status = False
+        pass
+    return pd.DataFrame(), pd.DataFrame(), False
 
     try:
         # 2. Загрузка остатков напрямую из Google Таблицы (вместо STOCK_FILE)
@@ -61,7 +76,12 @@ if st.session_state.api_connected:
     st.success("🟢 Связь с МойСклад установлена")
 else:
     st.warning("🟡 Работа в автономном режиме")
-
+with st.expander("📥 Загрузка новой приемки из Excel"):
+    data_input = st.text_area("Вставьте данные из Excel (Баркод, Кол-во, Короб)")
+    if st.button("Создать приемку в МойСклад"):
+        # Тут будет код, который берет текст и через requests.post 
+        # создает документ 'purchase' в МойСклад
+        st.success("Данные отправлены в МойСклад!")
 # --- МЕТРИКИ ---
 if not st.session_state.df.empty:
     total_boxes = len(st.session_state.df)
@@ -166,6 +186,7 @@ with tab3:
                     st.session_state.archive = st.session_state.archive.drop(st.session_state.archive.index[idx]).reset_index(drop=True)
                     save_data()
                     st.rerun()
+
 
 
 
