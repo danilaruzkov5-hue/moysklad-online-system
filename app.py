@@ -48,7 +48,7 @@ with st.sidebar:
     uploaded_file = st.file_uploader("Загрузи Excel (Баркод, Кол-во, Номер короба)", type=["xlsx"])
     target_type = st.radio("Тип поставки:", ["ИП", "ООО"])
 
-    if uploaded_file and st.button("➕ Добавить на баланс"):
+if uploaded_file and st.button("➕ Добавить на баланс"):
         try:
             new_data = pd.read_excel(uploaded_file)
             new_data.columns = ["Баркод", "Кол-во", "Номер короба"]
@@ -59,10 +59,20 @@ with st.sidebar:
                 for _, row in new_data.iterrows():
                     art, name = mapping.get(str(row["Баркод"]), ("-", "Новый товар"))
                     uid = f"ID_{datetime.now().timestamp()}_{row['Баркод']}_{_}"
+                    
+                    # ИСПРАВЛЕНИЕ ТУТ: Превращаем всё в стандартные типы Python
                     conn.execute(text("INSERT INTO stock VALUES (:u, :n, :a, :b, :q, :bn, :t)"),
-                                {"u":uid, "n":name, "a":art, "b":str(row["Баркод"]), "q":row["Кол-во"], "bn":str(row["Номер короба"]), "t":target_type})
+                                {
+                                    "u": str(uid), 
+                                    "n": str(name), 
+                                    "a": str(art), 
+                                    "b": str(row["Баркод"]), 
+                                    "q": float(row["Кол-во"]), # Стандартное число с точкой
+                                    "bn": str(row["Номер короба"]), 
+                                    "t": str(target_type)
+                                })
                 conn.commit()
-            st.success("Данные добавлены в облачную базу!")
+            st.success("Данные успешно сохранены в облако!")
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка файла: {e}")
@@ -139,6 +149,7 @@ with t5:
         res = df_all.groupby("barcode")["quantity"].sum().reset_index()
         res.columns = ["Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
