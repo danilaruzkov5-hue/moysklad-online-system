@@ -8,7 +8,7 @@ import os
 TOKEN = "bdcc5b722dd8bad73b205be6fff08267da7c121a"
 SHEET_ID = "1uF7RvQUIylmGDaco1nDhZo2GSU1OOeos511K5xqZY3w"
 # Ссылка для чтения данных из твоей Google Таблицы в формате CSV
-STOCK_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
+STOCK_URL = https://script.google.com/macros/s/AKfycbwy0HjIVRjXwfvbHYEGKqu0jj7JckFfTzkfeCV5fxC1dEp2Lj9XuybQQ5lcCTAKVr6PYw/exec
 
 st.set_page_config(layout="wide", page_title="Складской Терминал Онлайн")
 st.title("📂 Система управления складом (ОНЛАЙН)")
@@ -160,6 +160,7 @@ with tab3:
                     st.session_state.archive = st.session_state.archive.drop(st.session_state.archive.index[idx]).reset_index(drop=True)
                     save_data()
                     st.rerun()
+
 
 
 
