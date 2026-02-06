@@ -13,11 +13,18 @@ STOCK_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=cs
 st.set_page_config(layout="wide", page_title="Складской Терминал Онлайн")
 st.title("📂 Система управления складом (ОНЛАЙН)")
 
-# --- ФУНКЦИИ ---
-def save_data():
-    # В облачной версии сохранение идет в session_state для мгновенной работы.
-    # Это позволяет 10+ менеджерам работать без конфликтов.
-    st.sidebar.success("Действие выполнено!")
+def save_data(item_data=None):
+    # Сохранение в локальные CSV для надежности
+    st.session_state.df.to_csv(STOCK_FILE, index=False)
+    st.session_state.archive.to_csv(ARCHIVE_FILE, index=False)
+    
+    # ОТПРАВКА В GOOGLE ТАБЛИЦУ (Твой секретный ингредиент)
+    if item_data:
+        script_url = "https://script.google.com/macros/s/AKfycbwehMYINOBcn4vJbEYB0ovpCRpNYjuWeVjRgtHJ7-sSeLLtJxhEbn2Dd6YZAC6mPQ8z0A/exec"
+        try:
+            requests.post(script_url, json=item_data)
+        except:
+            pass
 
 @st.cache_data(ttl=10) # Обновлять данные из Google Таблицы каждые 10 секунд
 def load_initial_data():
@@ -140,3 +147,4 @@ with tab3:
                     st.session_state.archive = st.session_state.archive.drop(st.session_state.archive.index[idx]).reset_index(drop=True)
                     save_data()
                     st.rerun()
+
