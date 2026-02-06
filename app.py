@@ -115,8 +115,10 @@ with t2: render_table("ООО", "ooo")
 with t3:
     arch_df = pd.read_sql(text("SELECT * FROM archive"), engine)
     if not arch_df.empty:
+        # ИСПРАВЛЕНИЕ: используем современный способ выбора строк
         sel_a = st.dataframe(arch_df, use_container_width=True, hide_index=True, selection_mode="multi-row", key="arch_t")
         
+        # Кнопка скачивания Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             out = arch_df[["barcode", "quantity", "box_num"]].copy()
@@ -125,16 +127,17 @@ with t3:
             out.to_excel(writer, index=False, sheet_name='Отгрузка')
         st.download_button("📥 Скачать Excel отгрузки", output.getvalue(), "otgruzka.xlsx")
 
-        idx_a = sel_a.get("selection", {}).get("rows", [])
-        if idx_a and st.button("🔙 Вернуть на баланс"):
+        # Получаем выбранные строки правильно
+        idx_a = sel_a.selection.rows
+        if idx_a and st.button("🔙 Вернуть выбранное на баланс"):
             with engine.connect() as conn:
                 for _, r in arch_df.iloc[idx_a].iterrows():
                     conn.execute(text("INSERT INTO stock SELECT uuid, name, article, barcode, quantity, box_num, type FROM archive WHERE uuid=:u"), {"u": r['uuid']})
                     conn.execute(text("DELETE FROM archive WHERE uuid=:u"), {"u": r['uuid']})
                 conn.commit()
             st.rerun()
-    else: st.info("Архив пуст")
-
+    else: 
+        st.info("Архив пуст")
 with t4:
     df_all = pd.read_sql(text("SELECT * FROM stock"), engine)
     boxes = len(df_all)
@@ -149,5 +152,6 @@ with t5:
         res = df_all.groupby("barcode")["quantity"].sum().reset_index()
         res.columns = ["Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
