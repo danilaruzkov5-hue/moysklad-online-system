@@ -138,7 +138,7 @@ with tab2: render_tab("ООО", "ooo")
 with tab3:
     st.subheader("📜 Архив отгрузок")
     if not st.session_state.archive.empty:
-        # Таблица архива с возможностью выбора строк
+        # Таблица архива с выбором строк
         archive_event = st.dataframe(
             st.session_state.archive,
             use_container_width=True,
@@ -153,28 +153,40 @@ with tab3:
         with col_arch1:
             if st.button("⬅️ ВЕРНУТЬ ВЫБРАННОЕ В ОСТАТКИ", use_container_width=True):
                 selected_archive_rows = archive_event.get("selection", {}).get("rows", [])
-                
                 if selected_archive_rows:
-                    # Получаем данные выбранных товаров
                     items_to_return = st.session_state.archive.iloc[selected_archive_rows]
                     ids_to_return = items_to_return['uuid'].tolist()
                     
-                    # 1. Добавляем обратно в основной список
+                    # Возвращаем в основную таблицу
                     st.session_state.df = pd.concat([st.session_state.df, items_to_return], ignore_index=True)
-                    
-                    # 2. Удаляем из архива
+                    # Убираем из архива
                     st.session_state.archive = st.session_state.archive[~st.session_state.archive['uuid'].isin(ids_to_return)].reset_index(drop=True)
                     
-                    st.success("Товары возвращены в список остатков!")
+                    st.success("Товары возвращены в остатки!")
                     st.rerun()
                 else:
-                    st.error("Сначала выделите товары в архиве!")
+                    st.error("Выдели товары галочками!")
 
         with col_arch2:
-            if st.button("🗑 ОЧИСТИТЬ ВЕСЬ АРХИВ", use_container_width=True):
-                st.session_state.archive = pd.DataFrame()
-                st.rerun()
+            # Функция для конвертации архива в Excel
+            @st.cache_data
+            def convert_df_to_excel(df):
+                import io
+                output = io.BytesIO()
+                # Удаляем uuid перед выгрузкой, чтобы не пугать заказчика лишними кодами
+                clean_df = df.drop(columns=['uuid']) if 'uuid' in df.columns else df
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    clean_df.to_excel(writer, index=False, sheet_name='Отгрузка')
+                return output.getvalue()
+
+            excel_data = convert_df_to_excel(st.session_state.archive)
+            
+            st.download_button(
+                label="📥 СКАЧАТЬ АРХИВ (EXCEL)",
+                data=excel_data,
+                file_name="otgruzka_sklad.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
     else:
         st.info("Архив пуст")
-
-
