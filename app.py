@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 import io
 
-# --- ТВОИ ДАННЫЕ (ИЗ СКРИНШОТА) ---
+# --- ТВОИ ДАННЫЕ (ИЗ СКРИНШОТОВ) ---
 TOKEN = "294b1754c146ae261cf689ffbf8fcaaa5c993e2d"
 ORG_ID = "da0e7ea9-d216-11ec-0a80-08be00007acc" 
 STORE_ID = "da0f3443-d216-11ec-0a80-08be00007ace" 
@@ -87,12 +87,14 @@ def render_table(storage_type, key_suffix):
     if filt.empty:
         st.info(f"На складе {storage_type} пусто")
     else:
+        # Мульти-выбор для массовой отгрузки
         sel = st.dataframe(filt, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key=f"t_{key_suffix}")
         idx = sel.get("selection", {}).get("rows", [])
-        
         if idx and st.button(f"🚀 Завершить и отгрузить выбранное", key=f"b_{key_suffix}"):
             shipped = filt.iloc[idx].copy()
+            # Добавляем в архив
             st.session_state.arch = pd.concat([st.session_state.arch, shipped], ignore_index=True)
+            # Удаляем из основного списка
             st.session_state.df = st.session_state.df[~st.session_state.df["uuid"].isin(shipped["uuid"])]
             st.rerun()
 
@@ -103,30 +105,33 @@ with t3:
     if not st.session_state.arch.empty:
         sel_arch = st.dataframe(st.session_state.arch, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="arch_t")
         
-        # Генерация Excel (используем openpyxl вместо xlsxwriter)
+        # ГЕНЕРАЦИЯ EXCEL (заменила движок на openpyxl, чтобы не было ошибки)
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             out_df = st.session_state.arch[["Баркод", "Кол-во", "Номер короба"]].copy()
             out_df["Дата отгрузки"] = datetime.now().strftime("%d.%m.%Y")
             out_df["Склад"] = st.session_state.arch["Тип"]
+            # Пустые колонки по ТЗ
+            out_df["Доп 1"] = ""
+            out_df["Доп 2"] = ""
             out_df.to_excel(writer, index=False, sheet_name='Отгрузка')
         
         st.download_button("📥 Скачать Excel поставки", output.getvalue(), "postavka.xlsx", use_container_width=True)
 
-        # ВОЗВРАТ ИЗ АРХИВА (Кнопка по ТЗ)
+        # ЛОГИКА ВОЗВРАТА (исправлено)
         arch_idx = sel_arch.get("selection", {}).get("rows", [])
         if arch_idx and st.button("⬅️ Вернуть выбранные короба в остатки"):
             to_return = st.session_state.arch.iloc[arch_idx].copy()
-            # Добавляем обратно в основной список
+            # Возвращаем в DF
             st.session_state.df = pd.concat([st.session_state.df, to_return], ignore_index=True)
-            # Удаляем из архива по uuid
+            # Удаляем из архива
             st.session_state.arch = st.session_state.arch[~st.session_state.arch["uuid"].isin(to_return["uuid"])]
             st.rerun()
     else:
         st.info("Архив пуст")
 
 with t4:
-    # Расчет хранения 16 коробов = 1 паллет = 50р
+    # Расчет по формуле заказчика: 16 коробов = 1 паллет = 50р
     total_boxes = len(st.session_state.df)
     pallets = math.ceil(total_boxes / 16) if total_boxes > 0 else 0
     st.metric("Всего коробов на остатке", total_boxes)
@@ -137,4 +142,5 @@ with t5:
     if not st.session_state.df.empty:
         summary = st.session_state.df.groupby("Баркод")["Кол-во"].sum().reset_index()
         st.dataframe(summary, use_container_width=True, hide_index=True)
+
 
