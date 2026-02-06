@@ -101,23 +101,33 @@ def render_tab(storage_type, key_suffix):
     )
 
     qty_to_ship = st.number_input("Сколько штук отгружаем?", min_value=1, value=1, key=f"qty_{key_suffix}")
-    if st.button(f"🚀 ОТГРУЗИТЬ ВЫБРАННОЕ", key=f"btn_{key_suffix}"):
+if st.button(f"🚀 ОТГРУЗИТЬ ВЫБРАННОЕ", key=f"btn_{key_suffix}"):
+        # 1. Получаем индексы выбранных строк
         selected_rows = event.get("selection", {}).get("rows", [])
+        
         if selected_rows:
+            # Создаем временный список для удаления, чтобы не сбить индексы в цикле
+            uuids_to_remove = []
+            
             for idx in selected_rows:
                 item = filtered_df.iloc[idx].copy()
                 
-                # Списание в МойСклад
+                # 2. Списываем в МойСклад (API)
                 create_ms_loss(item['uuid'], qty_to_ship)
                 
-                # Добавление в архив (вкладка 3)
+                # 3. Добавляем в архив
                 item['Кол-во'] = qty_to_ship
                 st.session_state.archive = pd.concat([st.session_state.archive, pd.DataFrame([item])], ignore_index=True)
                 
-                # Удаление из основного списка (чтобы исчезло)
-                st.session_state.df = st.session_state.df[st.session_state.df['uuid'] != item['uuid']].reset_index(drop=True)
+                # Сохраняем ID товара для удаления
+                uuids_to_remove.append(item['uuid'])
             
-            st.success("Отгружено!")
+            # 4. САМОЕ ВАЖНОЕ: Удаляем отгруженные товары из основной таблицы в памяти
+            st.session_state.df = st.session_state.df[~st.session_state.df['uuid'].isin(uuids_to_remove)].reset_index(drop=True)
+            
+            st.success(f"Успешно отгружено позиций: {len(uuids_to_remove)}")
+            
+            # 5. Принудительно обновляем интерфейс
             st.rerun()
         else:
             st.error("Сначала выделите строки галочками!")
@@ -130,5 +140,6 @@ with tab3:
         st.dataframe(st.session_state.archive, use_container_width=True, hide_index=True)
     else:
         st.info("Архив пуст")
+
 
 
