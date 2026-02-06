@@ -83,7 +83,8 @@ tab1, tab2, tab3 = st.tabs(["📊 Остатки ИП", "🏢 Остатки О�
 
 def render_tab(storage_type_filter, key_suffix):
     # Фильтруем данные для отображения
-    mask = st.session_state.df['Направление(склад)'].str.contains(storage_type_filter, na=False)
+    # Замени строку 86 на эту:
+    mask = st.session_state.df.iloc[:, 5].astype(str).str.contains(storage_type_filter, na=False)
     filtered_df = st.session_state.df[mask]
     
     if sq:
@@ -160,6 +161,7 @@ with tab3:
                     st.session_state.archive = st.session_state.archive.drop(st.session_state.archive.index[idx]).reset_index(drop=True)
                     save_data()
                     st.rerun()
+
 
 
 
