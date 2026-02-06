@@ -44,7 +44,7 @@ with st.sidebar:
     uploaded_file = st.file_uploader("Загрузи Excel", type=["xlsx"])
     target_type = st.radio("Тип поставки:", ["ИП", "ООО"])
 
-    if uploaded_file and st.button("➕ Добавить"):
+    if uploaded_file and st.button("➕ Добавить на баланс"):
         try:
             new_data = pd.read_excel(uploaded_file)
             new_data.columns = ["Баркод", "Кол-во", "Номер короба"]
@@ -59,13 +59,13 @@ with st.sidebar:
                                 {"u":str(uid), "n":str(name), "a":str(art), "b":str(row["Баркод"]), 
                                  "q":float(row["Кол-во"]), "bn":str(row["Номер короба"]), "t":str(target_type)})
                 conn.commit()
-            st.success("Готово!")
+            st.success("Данные успешно сохранены в облако!")
             st.rerun()
         except Exception as e:
-            st.error(f"Ошибка: {e}")
+            st.error(f"Ошибка файла: {e}")
 
-search = st.text_input("🔍 Поиск")
-t1, t2, t3, t4, t5 = st.tabs(["ИП", "ООО", "Архив", "Хранение", "Итого"])
+search = st.text_input("🔍 Быстрый поиск (Баркод / Артикул)")
+t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📜 Архив", "💰 Хранение", "📊 Итого"])
 
 def render_simple_table(storage_type, key):
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
@@ -73,27 +73,30 @@ def render_simple_table(storage_type, key):
         df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
     
     if not df.empty:
-        # Используем простую таблицу с выбором через Checkbox для стабильности
-        selected_indices = []
-        for i, row in df.iterrows():
-            if st.checkbox(f"{row['name']} | Короб: {row['box_num']}", key=f"check_{key}_{i}"):
-                selected_indices.append(i)
-        
         st.dataframe(df, use_container_width=True, hide_index=True)
         
-        if selected_indices:
+        with st.expander("⚙️ Действия с товаром"):
+            target_id = st.selectbox("Выбери ID товара для действия", df['uuid'].tolist(), key=f"select_{key}")
             c1, c2 = st.columns(2)
-            if c1.button("✅ Отгрузить выбранное", key=f"btn_ship_{key}"):
+            if c1.button("✅ Отгрузить в архив", key=f"ship_{key}"):
                 with engine.connect() as conn:
-                    for idx in selected_indices:
-                        r = df.iloc[idx]
-                        conn.execute(text("INSERT INTO archive SELECT *, :d FROM stock WHERE uuid=:u"), {"d": datetime.now().strftime("%d.%m %H:%M"), "u": r['uuid']})
-                        conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": r['uuid']})
+                    conn.execute(text("INSERT INTO archive SELECT *, :d FROM stock WHERE uuid=:u"), {"d": datetime.now().strftime("%d.%m %H:%M"), "u": target_id})
+                    conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": target_id})
                     conn.commit()
                 st.rerun()
-    else: st.info("Пусто")
-         with t1: render_simple_table("ИП", "ip")
-with t2: render_simple_table("ООО", "ooo")
+            if c2.button("🗑️ Удалить безвозвратно", key=f"del_{key}"):
+                with engine.connect() as conn:
+                    conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": target_id})
+                    conn.commit()
+                st.rerun()
+    else: st.info(f"На складе {storage_type} пока ничего нет")
+
+# --- ГЛАВНЫЕ БЛОКИ БЕЗ ОШИБОК ОТСТУПОВ ---
+with t1:
+    render_simple_table("ИП", "ip")
+
+with t2:
+    render_simple_table("ООО", "ooo")
 
 with t3:
     arch_df = pd.read_sql(text("SELECT * FROM archive"), engine)
@@ -102,26 +105,21 @@ with t3:
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             arch_df.to_excel(writer, index=False)
-        st.download_button("📥 Скачать Excel", output.getvalue(), "archive.xlsx")
-        if st.button("🗑️ Очистить весь архив"):
-            with engine.connect() as conn:
-                conn.execute(text("DELETE FROM archive"))
-                conn.commit()
-            st.rerun()
+        st.download_button("📥 Скачать Excel отгрузки", output.getvalue(), "otgruzka.xlsx")
     else: st.info("Архив пуст")
 
 with t4:
     df_all = pd.read_sql(text("SELECT * FROM stock"), engine)
     boxes = len(df_all)
     pallets = math.ceil(boxes / 16) if boxes > 0 else 0
-    st.metric("Паллет", pallets)
-    st.write(f"Хранение: {pallets * 50} ₽/сут")
+    st.metric("Всего коробов", boxes)
+    st.metric("Паллет к оплате", pallets)
+    st.write(f"Стоимость/сутки: {pallets * 50} ₽")
 
 with t5:
     df_all = pd.read_sql(text("SELECT * FROM stock"), engine)
     if not df_all.empty:
         res = df_all.groupby("barcode")["quantity"].sum().reset_index()
+        res.columns = ["Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
-
-
 
