@@ -138,7 +138,42 @@ with tab2: render_tab("ООО", "ooo")
 with tab3:
     st.subheader("📜 Архив отгрузок")
     if not st.session_state.archive.empty:
-        st.dataframe(st.session_state.archive, use_container_width=True, hide_index=True)
+        # Таблица архива с возможностью выбора строк
+        archive_event = st.dataframe(
+            st.session_state.archive,
+            use_container_width=True,
+            hide_index=True,
+            selection_mode="multi-row",
+            on_select="rerun",
+            key="archive_table"
+        )
+
+        col_arch1, col_arch2 = st.columns(2)
+        
+        with col_arch1:
+            if st.button("⬅️ ВЕРНУТЬ ВЫБРАННОЕ В ОСТАТКИ", use_container_width=True):
+                selected_archive_rows = archive_event.get("selection", {}).get("rows", [])
+                
+                if selected_archive_rows:
+                    # Получаем данные выбранных товаров
+                    items_to_return = st.session_state.archive.iloc[selected_archive_rows]
+                    ids_to_return = items_to_return['uuid'].tolist()
+                    
+                    # 1. Добавляем обратно в основной список
+                    st.session_state.df = pd.concat([st.session_state.df, items_to_return], ignore_index=True)
+                    
+                    # 2. Удаляем из архива
+                    st.session_state.archive = st.session_state.archive[~st.session_state.archive['uuid'].isin(ids_to_return)].reset_index(drop=True)
+                    
+                    st.success("Товары возвращены в список остатков!")
+                    st.rerun()
+                else:
+                    st.error("Сначала выделите товары в архиве!")
+
+        with col_arch2:
+            if st.button("🗑 ОЧИСТИТЬ ВЕСЬ АРХИВ", use_container_width=True):
+                st.session_state.archive = pd.DataFrame()
+                st.rerun()
     else:
         st.info("Архив пуст")
 
