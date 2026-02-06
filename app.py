@@ -101,18 +101,31 @@ def render_tab(storage_type_filter, key_suffix):
     event = st.dataframe(filtered_df, use_container_width=True, on_select="rerun", selection_mode="multi-row", key=f"table_{key_suffix}")
     
     # Логика отгрузки
+# 1. Поле для выбора количества (добавь ПЕРЕД кнопкой)
+    qty_to_ship = st.number_input("Сколько штук отгружаем?", min_value=1, value=1, key=f"qty_{key_suffix}")
+
+    # 2. Твоя кнопка (оставляем как есть)
     if st.button(f"🚀 ОТГРУЗИТЬ ВЫБРАННЫЕ", key=f"btn_{key_suffix}"):
         if event.selection.rows:
-            # Получаем реальные индексы из отфильтрованного DF
+            # Получаем индексы выбранных строк
             selected_indices = filtered_df.index[event.selection.rows]
             
-            # Копируем в архив
-            shipped_items = st.session_state.df.loc[selected_indices]
+            # Цикл для отправки каждой выбранной позиции в Google Таблицу
+            for idx in selected_indices:
+                item_to_send = st.session_state.df.loc[idx].to_dict()
+                # ПОДМЕНЯЕМ количество на то, которое ты ввел в поле выше
+                item_to_send['Кол-во'] = qty_to_ship 
+                
+                # Отправляем именно это количество в Google
+                save_data(item_to_send)
+            
+            # Обычная логика архивации (перенос строки в архив на сайте)
+            shipped_items = st.session_state.df.loc[selected_indices].copy()
+            shipped_items['Кол-во'] = qty_to_ship # Обновляем и в архиве сайта
+            
             st.session_state.archive = pd.concat([st.session_state.archive, shipped_items], ignore_index=True)
-            # Удаляем из основного состава
             st.session_state.df = st.session_state.df.drop(selected_indices).reset_index(drop=True)
             
-            save_data()
             st.rerun()
         else:
             st.error("Сначала выделите строки галочками!")
@@ -142,6 +155,7 @@ with tab3:
                     st.session_state.archive = st.session_state.archive.drop(st.session_state.archive.index[idx]).reset_index(drop=True)
                     save_data()
                     st.rerun()
+
 
 
 
