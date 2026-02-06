@@ -3,13 +3,13 @@ import pandas as pd
 import math
 import requests
 
-# --- НАСТРОЙКИ (Впиши свои данные) ---
+# --- КОНСТАНТЫ (ВСТАВЬ СВОИ ДАННЫЕ) ---
 TOKEN = "bdcc5b722dd8bad73b205be6fff08267da7c121a"
 ORG_ID = "da0e7ea9-d216-11ec-0a80-08be00007acc" 
 STORE_ID = "da0f3443-d216-11ec-0a80-08be00007ace" 
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
-st.set_page_config(layout="wide", page_title="Складской Терминал")
+st.set_page_config(layout="wide", page_title="Складской Терминал Онлайн")
 
 # 1. Загрузка данных из МойСклад
 def load_initial_data():
@@ -47,18 +47,16 @@ def create_ms_loss(product_id, quantity):
     except:
         return False
 
-# --- ИНИЦИАЛИЗАЦИЯ (Работаем с памятью) ---
+# --- ИНИЦИАЛИЗАЦИЯ ---
 if 'archive' not in st.session_state:
     st.session_state.archive = pd.DataFrame()
-
 if 'df' not in st.session_state:
     st.session_state.df = load_initial_data()
 
-# --- ИНТЕРФЕЙС (ТОЧЬ-В-ТОЧЬ КАК НА СКРИНШОТАХ) ---
 st.title("📦 Система управления складом (ОНЛАЙН)")
 
 # МЕТРИКИ (Скриншот 1000011681)
-if not st.session_state.df.empty:
+if st.session_state.df is not None and not st.session_state.df.empty:
     total_boxes = len(st.session_state.df)
     pallets = math.ceil(total_boxes / 16)
     c1, c2, c3 = st.columns(3)
@@ -74,12 +72,12 @@ tab1, tab2, tab3 = st.tabs(["📦 Остатки ИП", "🏢 Остатки О�
 
 def render_tab(storage_type, key_suffix):
     df = st.session_state.df
-    if df.empty:
-        st.info("Остатки пусты")
+    if df is None or df.empty:
+        st.info("Нет данных")
         return
 
-    # Фильтрация данных
-    filtered_df = df[df["Направление(склад)"].str.contains(storage_type, na=False)]
+    # Фильтрация
+    filtered_df = df[df["Направление(склад)"].str.contains(storage_type, na=False)].reset_index(drop=True)
     if search_query:
         sq = search_query.lower()
         filtered_df = filtered_df[
@@ -88,34 +86,47 @@ def render_tab(storage_type, key_suffix):
             filtered_df['Наименование'].str.lower().str.contains(sq)
         ]
 
-    # Вывод списка товаров как на скриншоте 1000011682
-    for index, row in filtered_df.iterrows():
-        with st.container():
-            col_info, col_btn = st.columns([0.8, 0.2])
-            with col_info:
-                st.write(f"{row['Наименование']}")
-                st.write(f"Артикул: {row['Артикул']} | Баркод: {row['Баркод товара(штрихкод)']}")
-                st.write(f"Остаток в МС: {row['Кол-во']} шт.")
-                with col_btn:
-                qty = st.number_input("Кол-во", min_value=1, value=1, key=f"q_{key_suffix}_{index}")
-                if st.button("🚀 ОТГРУЗИТЬ", key=f"btn_{key_suffix}_{index}"):
-                    # 1. Списываем в МойСклад
-                    create_ms_loss(row['uuid'], qty)
-                    
-                    # 2. Добавляем в архив
-                    item_archived = row.copy()
-                    item_archived['Отгружено'] = qty
-                    st.session_state.archive = pd.concat([st.session_state.archive, pd.DataFrame([item_archived])], ignore_index=True)
-                    
-                    # 3. Удаляем из текущих остатков в памяти (чтобы исчез)
-                    st.session_state.df = st.session_state.df[st.session_state.df['uuid'] != row['uuid']].reset_index(drop=True)
-                    
-                    st.success(f"Отгружено: {row['Артикул']}")
-                    st.rerun()
-            st.divider()
+    st.subheader(f"Остатки на складе {key_suffix}")
+    
+    # ТАБЛИЦА С ВЫБОРОМ (Как на видео 1000011581)
+    event = st.dataframe(
+        filtered_df,
+        use_container_width=True,
+        hide_index=True,
+        selection_mode="multi-row",
+        on_select="rerun",
+        key=f"table_{key_suffix}"
+    )
 
-with tab1: render_tab("ИП", "ИП")
-with tab2: render_tab("ООО", "ООО")
+    st.write("") # Отступ
+    qty = st.number_input("Сколько штук отгружаем?", min_value=1, value=1, key=f"qty_{key_suffix}")
+    if st.button(f"🚀 ОТГРУЗИТЬ ВЫБРАННОЕ ({key_suffix})", key=f"btn_{key_suffix}"):
+        selected_rows = event.get("selection", {}).get("rows", [])
+        if selected_rows:
+            for row_idx in selected_rows:
+                item = filtered_df.iloc[row_idx].copy()
+                
+                # 1. Списание в МС
+                create_ms_loss(item['uuid'], qty)
+                
+                # 2. В архив
+                item['Кол-во'] = qty
+                st.session_state.archive = pd.concat([st.session_state.archive, pd.DataFrame([item])], ignore_index=True)
+                
+                # 3. Удаляем из памяти
+                st.session_state.df = st.session_state.df[st.session_state.df['uuid'] != item['uuid']].reset_index(drop=True)
+            
+            st.success("Готово! Товар списан и перемещен в архив.")
+            st.rerun()
+        else:
+            st.error("Сначала выделите строки в таблице!")
+
+with tab1:
+    render_tab("ИП", "ИП")
+
+with tab2:
+    render_tab("ООО", "ООО")
+
 with tab3:
     st.subheader("📜 Архив отгрузок")
     if not st.session_state.archive.empty:
@@ -125,7 +136,6 @@ with tab3:
             st.rerun()
     else:
         st.info("Архив пуст")
-
 
 
 
