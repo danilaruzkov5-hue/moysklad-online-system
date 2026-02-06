@@ -3,15 +3,15 @@ import pandas as pd
 import math
 import requests
 
-# --- КОНСТАНТЫ ---
-TOKEN = "4cbd6f585d0c15ea2506a6f82fbdb8a69a49c422"
+# --- КОНСТАНТЫ (ОБЯЗАТЕЛЬНО ЗАПОЛНИ) ---
+TOKEN = "bdcc5b722dd8bad73b205be6fff08267da7c121a"
 ORG_ID = "da0e7ea9-d216-11ec-0a80-08be00007acc"
 STORE_ID = "da0f3443-d216-11ec-0a80-08be00007ace"
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
-st.set_page_config(layout="wide", page_title="Складской Терминал Онлайн")
+st.set_page_config(layout="wide", page_title="Складской Терминал")
 
-# 1. Загрузка данных из МойСклад
+# 1. Функция загрузки данных из МойСклад
 def load_initial_data():
     url = "https://api.moysklad.ru/api/remap/1.2/report/stock/all"
     try:
@@ -33,7 +33,7 @@ def load_initial_data():
         pass
     return pd.DataFrame(), False
 
-# 2. Функция списания (Исправлен URL и структура)
+# 2. Функция списания в МойСклад
 def create_ms_loss(product_id, quantity):
     url = "https://api.moysklad.ru/api/remap/1.2/entity/loss"
     data = {
@@ -50,27 +50,24 @@ def create_ms_loss(product_id, quantity):
     except:
         return False
 
-# --- ИНИЦИАЛИЗАЦИЯ ---
-# Инициализируем архив, если его нет
+# --- ИНИЦИАЛИЗАЦИЯ (Чтобы данные не скачивались заново при каждой кнопке) ---
 if 'archive' not in st.session_state:
     st.session_state.archive = pd.DataFrame()
 
-# Загружаем данные из МС только если их еще нет в памяти
 if 'df' not in st.session_state:
     df, status = load_initial_data()
     st.session_state.df = df
     st.session_state.api_connected = status
 
-# Кнопка для ручного обновления остатков (в сайдбаре или сверху)
-if st.sidebar.button("🔄 Обновить данные из МойСклад"):
-    df, status = load_initial_data()
-    st.session_state.df = df
-    st.session_state.api_connected = status
-    st.rerun()
-
+# --- ИНТЕРФЕЙС (Старый стиль со скриншотов) ---
 st.title("📦 Система управления складом (ОНЛАЙН)")
 
-# МЕТРИКИ (Как на скриншоте 1000011681)
+if st.sidebar.button("🔄 Обновить остатки из МС"):
+    df, status = load_initial_data()
+    st.session_state.df = df
+    st.session_state.rerun()
+
+# МЕТРИКИ
 if not st.session_state.df.empty:
     total_boxes = len(st.session_state.df)
     pallets = math.ceil(total_boxes / 16)
@@ -86,7 +83,12 @@ search_query = st.text_input("🔍 Поиск по Баркоду, Артику�
 tab1, tab2, tab3 = st.tabs(["📦 Остатки ИП", "🏢 Остатки ООО", "📜 Архив отгрузок"])
 
 def render_tab(storage_type, key_suffix):
+    # Берем данные из памяти (session_state)
     df = st.session_state.df
+    if df.empty:
+        st.info("Данные пусты или не загружены.")
+        return
+
     filtered_df = df[df["Направление(склад)"].str.contains(storage_type, na=False)].reset_index(drop=True)
 
     if search_query:
@@ -98,41 +100,41 @@ def render_tab(storage_type, key_suffix):
         ]
 
     st.subheader(f"Остатки {key_suffix}")
+    # Редактор для выбора строк (Галочки)
+    display_df = filtered_df.copy()
+    display_df.insert(0, "Выбрать", False)
     
-    if not filtered_df.empty:
-        # Добавляем колонку выбора
-        display_df = filtered_df.copy()
-        display_df.insert(0, "Выбрать", False)
-        
-        edited_df = st.data_editor(
-            display_df,
-            column_config={"Выбрать": st.column_config.CheckboxColumn(), "uuid": None},
-            disabled=["Наименование", "Артикул", "Баркод товара(штрихкод)", "Кол-во", "Направление(склад)"],
-            hide_index=True,
-            use_container_width=True,
-            key=f"ed_{key_suffix}"
-        )
+    edited_df = st.data_editor(
+        display_df,
+        column_config={"Выбрать": st.column_config.CheckboxColumn(), "uuid": None},
+        disabled=["Наименование", "Артикул", "Баркод товара(штрихкод)", "Кол-во", "Направление(склад)"],
+        hide_index=True,
+        use_container_width=True,
+        key=f"ed_{key_suffix}"
+    )
 
-        qty = st.number_input("Сколько штук отгружаем?", min_value=1, value=1, key=f"q_{key_suffix}")
-        if st.button(f"🚀 ОТГРУЗИТЬ ВЫБРАННОЕ", key=f"btn_{key_suffix}"):
-            selected_items = edited_df[edited_df["Выбрать"] == True]
-            
-            if not selected_items.empty:
+    qty = st.number_input("Сколько штук отгружаем?", min_value=1, value=1, key=f"q_{key_suffix}")
+
+    if st.button(f"🚀 ОТГРУЗИТЬ ВЫБРАННОЕ", key=f"btn_{key_suffix}"):
+        selected_items = edited_df[edited_df["Выбрать"] == True]
+        
+        if not selected_items.empty:
             for _, item in selected_items.iterrows():
-                create_ms_loss(item['uuid'], qty) # Списываем в облаке
+                # 1. Пробуем списать в МойСклад
+                create_ms_loss(item['uuid'], qty)
                 
-                # Добавляем в архив
+                # 2. Переносим в архив в памяти
                 arch_item = item.copy()
                 arch_item['Кол-во'] = qty
                 st.session_state.archive = pd.concat([st.session_state.archive, pd.DataFrame([arch_item.drop("Выбрать")])], ignore_index=True)
                 
-                # УДАЛЯЕМ из текущей таблицы в памяти (чтобы он исчез с экрана)
+                # 3. Удаляем из таблицы в ПАМЯТИ (чтобы исчез с экрана)
                 st.session_state.df = st.session_state.df[st.session_state.df['uuid'] != item['uuid']].reset_index(drop=True)
             
-            st.success("Отгрузка зафиксирована и убрана из текущих остатков!")
-            st.rerun() # Перезапускаем интерфейс, чтобы увидеть изменения
-            else:
-                st.error("Ничего не выбрано!")
+            st.success("Отгружено! Товар перемещен в архив.")
+            st.rerun()
+        else:
+            st.error("Поставь галочку в колонке 'Выбрать'!")
 
 with tab1: render_tab("ИП", "ИП")
 with tab2: render_tab("ООО", "ООО")
@@ -143,8 +145,8 @@ with tab3:
         if st.button("🗑 Очистить архив"):
             st.session_state.archive = pd.DataFrame()
             st.rerun()
-
-
+    else:
+        st.info("Архив пока пуст")
 
 
 
