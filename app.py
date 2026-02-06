@@ -3,15 +3,15 @@ import pandas as pd
 import math
 import requests
 
-# --- КОНСТАНТЫ (ОБЯЗАТЕЛЬНО ЗАПОЛНИ) ---
+# --- НАСТРОЙКИ (Впиши свои данные) ---
 TOKEN = "bdcc5b722dd8bad73b205be6fff08267da7c121a"
-ORG_ID = "da0e7ea9-d216-11ec-0a80-08be00007acc"
-STORE_ID = "da0f3443-d216-11ec-0a80-08be00007ace"
+ORG_ID = "da0e7ea9-d216-11ec-0a80-08be00007acc" 
+STORE_ID = "da0f3443-d216-11ec-0a80-08be00007ace" 
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
 st.set_page_config(layout="wide", page_title="Складской Терминал")
 
-# 1. Функция загрузки данных из МойСклад
+# 1. Загрузка данных из МойСклад
 def load_initial_data():
     url = "https://api.moysklad.ru/api/remap/1.2/report/stock/all"
     try:
@@ -28,21 +28,18 @@ def load_initial_data():
                     "Кол-во": item.get('stock', 0),
                     "Направление(склад)": "ИП" if "ИП" in item.get('name', '') else "ООО"
                 })
-            return pd.DataFrame(rows), True
+            return pd.DataFrame(rows)
     except:
         pass
-    return pd.DataFrame(), False
+    return pd.DataFrame()
 
-# 2. Функция списания в МойСклад
+# 2. Функция списания
 def create_ms_loss(product_id, quantity):
     url = "https://api.moysklad.ru/api/remap/1.2/entity/loss"
     data = {
         "organization": {"meta": {"href": f"https://api.moysklad.ru/api/remap/1.2/entity/organization/{ORG_ID}", "type": "organization", "mediaType": "application/json"}},
         "store": {"meta": {"href": f"https://api.moysklad.ru/api/remap/1.2/entity/store/{STORE_ID}", "type": "store", "mediaType": "application/json"}},
-        "positions": [{
-            "quantity": float(quantity),
-            "assortment": {"meta": {"href": f"https://api.moysklad.ru/api/remap/1.2/entity/product/{product_id}", "type": "product", "mediaType": "application/json"}}
-        }]
+        "positions": [{"quantity": float(quantity), "assortment": {"meta": {"href": f"https://api.moysklad.ru/api/remap/1.2/entity/product/{product_id}", "type": "product", "mediaType": "application/json"}}}]
     }
     try:
         res = requests.post(url, headers=HEADERS, json=data)
@@ -50,24 +47,17 @@ def create_ms_loss(product_id, quantity):
     except:
         return False
 
-# --- ИНИЦИАЛИЗАЦИЯ (Чтобы данные не скачивались заново при каждой кнопке) ---
+# --- ИНИЦИАЛИЗАЦИЯ (Работаем с памятью) ---
 if 'archive' not in st.session_state:
     st.session_state.archive = pd.DataFrame()
 
 if 'df' not in st.session_state:
-    df, status = load_initial_data()
-    st.session_state.df = df
-    st.session_state.api_connected = status
+    st.session_state.df = load_initial_data()
 
-# --- ИНТЕРФЕЙС (Старый стиль со скриншотов) ---
+# --- ИНТЕРФЕЙС (ТОЧЬ-В-ТОЧЬ КАК НА СКРИНШОТАХ) ---
 st.title("📦 Система управления складом (ОНЛАЙН)")
 
-if st.sidebar.button("🔄 Обновить остатки из МС"):
-    df, status = load_initial_data()
-    st.session_state.df = df
-    st.session_state.rerun()
-
-# МЕТРИКИ
+# МЕТРИКИ (Скриншот 1000011681)
 if not st.session_state.df.empty:
     total_boxes = len(st.session_state.df)
     pallets = math.ceil(total_boxes / 16)
@@ -78,19 +68,18 @@ if not st.session_state.df.empty:
 
 st.divider()
 
+# ПОИСК И ВКЛАДКИ
 search_query = st.text_input("🔍 Поиск по Баркоду, Артикулу или Наименованию")
-
 tab1, tab2, tab3 = st.tabs(["📦 Остатки ИП", "🏢 Остатки ООО", "📜 Архив отгрузок"])
 
 def render_tab(storage_type, key_suffix):
-    # Берем данные из памяти (session_state)
     df = st.session_state.df
     if df.empty:
-        st.info("Данные пусты или не загружены.")
+        st.info("Остатки пусты")
         return
 
-    filtered_df = df[df["Направление(склад)"].str.contains(storage_type, na=False)].reset_index(drop=True)
-
+    # Фильтрация данных
+    filtered_df = df[df["Направление(склад)"].str.contains(storage_type, na=False)]
     if search_query:
         sq = search_query.lower()
         filtered_df = filtered_df[
@@ -99,42 +88,31 @@ def render_tab(storage_type, key_suffix):
             filtered_df['Наименование'].str.lower().str.contains(sq)
         ]
 
-    st.subheader(f"Остатки {key_suffix}")
-    # Редактор для выбора строк (Галочки)
-    display_df = filtered_df.copy()
-    display_df.insert(0, "Выбрать", False)
-    
-    edited_df = st.data_editor(
-        display_df,
-        column_config={"Выбрать": st.column_config.CheckboxColumn(), "uuid": None},
-        disabled=["Наименование", "Артикул", "Баркод товара(штрихкод)", "Кол-во", "Направление(склад)"],
-        hide_index=True,
-        use_container_width=True,
-        key=f"ed_{key_suffix}"
-    )
-
-    qty = st.number_input("Сколько штук отгружаем?", min_value=1, value=1, key=f"q_{key_suffix}")
-
-    if st.button(f"🚀 ОТГРУЗИТЬ ВЫБРАННОЕ", key=f"btn_{key_suffix}"):
-        selected_items = edited_df[edited_df["Выбрать"] == True]
-        
-        if not selected_items.empty:
-            for _, item in selected_items.iterrows():
-                # 1. Пробуем списать в МойСклад
-                create_ms_loss(item['uuid'], qty)
-                
-                # 2. Переносим в архив в памяти
-                arch_item = item.copy()
-                arch_item['Кол-во'] = qty
-                st.session_state.archive = pd.concat([st.session_state.archive, pd.DataFrame([arch_item.drop("Выбрать")])], ignore_index=True)
-                
-                # 3. Удаляем из таблицы в ПАМЯТИ (чтобы исчез с экрана)
-                st.session_state.df = st.session_state.df[st.session_state.df['uuid'] != item['uuid']].reset_index(drop=True)
-            
-            st.success("Отгружено! Товар перемещен в архив.")
-            st.rerun()
-        else:
-            st.error("Поставь галочку в колонке 'Выбрать'!")
+    # Вывод списка товаров как на скриншоте 1000011682
+    for index, row in filtered_df.iterrows():
+        with st.container():
+            col_info, col_btn = st.columns([0.8, 0.2])
+            with col_info:
+                st.write(f"{row['Наименование']}")
+                st.write(f"Артикул: {row['Артикул']} | Баркод: {row['Баркод товара(штрихкод)']}")
+                st.write(f"Остаток в МС: {row['Кол-во']} шт.")
+                with col_btn:
+                qty = st.number_input("Кол-во", min_value=1, value=1, key=f"q_{key_suffix}_{index}")
+                if st.button("🚀 ОТГРУЗИТЬ", key=f"btn_{key_suffix}_{index}"):
+                    # 1. Списываем в МойСклад
+                    create_ms_loss(row['uuid'], qty)
+                    
+                    # 2. Добавляем в архив
+                    item_archived = row.copy()
+                    item_archived['Отгружено'] = qty
+                    st.session_state.archive = pd.concat([st.session_state.archive, pd.DataFrame([item_archived])], ignore_index=True)
+                    
+                    # 3. Удаляем из текущих остатков в памяти (чтобы исчез)
+                    st.session_state.df = st.session_state.df[st.session_state.df['uuid'] != row['uuid']].reset_index(drop=True)
+                    
+                    st.success(f"Отгружено: {row['Артикул']}")
+                    st.rerun()
+            st.divider()
 
 with tab1: render_tab("ИП", "ИП")
 with tab2: render_tab("ООО", "ООО")
@@ -146,7 +124,7 @@ with tab3:
             st.session_state.archive = pd.DataFrame()
             st.rerun()
     else:
-        st.info("Архив пока пуст")
+        st.info("Архив пуст")
 
 
 
