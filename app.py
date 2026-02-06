@@ -7,7 +7,8 @@ from datetime import datetime
 # --- НАСТРОЙКИ ---
 TOKEN = "294b1754c146ae261cf689ffbf8fcaaa5c993e2d"
 ORG_ID = "da0e7ea9-d216-11ec-0a80-08be00007acc" 
-STORE_ID = "da0f3443-d216-11ec-0a80-08be00007ace" Content-Type": "application/json"}
+STORE_ID = "da0f3443-d216-11ec-0a80-08be00007ace" 
+HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
 st.set_page_config(layout="wide", page_title="Складской Терминал")
 
