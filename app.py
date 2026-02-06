@@ -119,11 +119,16 @@ def render_tab(storage_type_filter, key_suffix):
                 # Отправляем именно это количество в Google
                 save_data(item_to_send)
             
-            # Обычная логика архивации (перенос строки в архив на сайте)
+# Создаем запись для архива
             shipped_items = st.session_state.df.loc[selected_indices].copy()
-            shipped_items['Кол-во'] = qty_to_ship # Обновляем и в архиве сайта
             
+            # ВАЖНО: Мы заменяем старое общее количество на то, которое реально отгрузили
+            shipped_items['Кол-во'] = qty_to_ship 
+            
+            # Добавляем в архив на сайте
             st.session_state.archive = pd.concat([st.session_state.archive, shipped_items], ignore_index=True)
+            
+            # Удаляем из основного списка (или уменьшаем количество)
             st.session_state.df = st.session_state.df.drop(selected_indices).reset_index(drop=True)
             
             st.rerun()
@@ -155,6 +160,7 @@ with tab3:
                     st.session_state.archive = st.session_state.archive.drop(st.session_state.archive.index[idx]).reset_index(drop=True)
                     save_data()
                     st.rerun()
+
 
 
 
