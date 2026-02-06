@@ -51,12 +51,22 @@ def create_ms_loss(product_id, quantity):
         return False
 
 # --- ИНИЦИАЛИЗАЦИЯ ---
+# Инициализируем архив, если его нет
+if 'archive' not in st.session_state:
+    st.session_state.archive = pd.DataFrame()
+
+# Загружаем данные из МС только если их еще нет в памяти
 if 'df' not in st.session_state:
     df, status = load_initial_data()
     st.session_state.df = df
     st.session_state.api_connected = status
-if 'archive' not in st.session_state:
-    st.session_state.archive = pd.DataFrame()
+
+# Кнопка для ручного обновления остатков (в сайдбаре или сверху)
+if st.sidebar.button("🔄 Обновить данные из МойСклад"):
+    df, status = load_initial_data()
+    st.session_state.df = df
+    st.session_state.api_connected = status
+    st.rerun()
 
 st.title("📦 Система управления складом (ОНЛАЙН)")
 
@@ -108,24 +118,21 @@ def render_tab(storage_type, key_suffix):
             selected_items = edited_df[edited_df["Выбрать"] == True]
             
             if not selected_items.empty:
-                for _, item in selected_items.iterrows():
-                    # Пытаемся списать в МС
-                    ms_success = create_ms_loss(item['uuid'], qty)
-                    
-                    # В ЛЮБОМ СЛУЧАЕ добавляем в архив для визуализации (чтобы ты видел работу)
-                    arch_item = item.copy()
-                    arch_item['Кол-во'] = qty
-                    st.session_state.archive = pd.concat([st.session_state.archive, pd.DataFrame([arch_item.drop("Выбрать")])], ignore_index=True)
-                    
-                    # Удаляем из списка
-                    st.session_state.df = st.session_state.df[st.session_state.df['uuid'] != item['uuid']].reset_index(drop=True)
+            for _, item in selected_items.iterrows():
+                create_ms_loss(item['uuid'], qty) # Списываем в облаке
                 
-                st.success("Отгрузка зафиксирована!")
-                st.rerun()
+                # Добавляем в архив
+                arch_item = item.copy()
+                arch_item['Кол-во'] = qty
+                st.session_state.archive = pd.concat([st.session_state.archive, pd.DataFrame([arch_item.drop("Выбрать")])], ignore_index=True)
+                
+                # УДАЛЯЕМ из текущей таблицы в памяти (чтобы он исчез с экрана)
+                st.session_state.df = st.session_state.df[st.session_state.df['uuid'] != item['uuid']].reset_index(drop=True)
+            
+            st.success("Отгрузка зафиксирована и убрана из текущих остатков!")
+            st.rerun() # Перезапускаем интерфейс, чтобы увидеть изменения
             else:
                 st.error("Ничего не выбрано!")
-    else:
-        st.info("Пусто")
 
 with tab1: render_tab("ИП", "ИП")
 with tab2: render_tab("ООО", "ООО")
@@ -136,6 +143,7 @@ with tab3:
         if st.button("🗑 Очистить архив"):
             st.session_state.archive = pd.DataFrame()
             st.rerun()
+
 
 
 
