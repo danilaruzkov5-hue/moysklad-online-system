@@ -4,7 +4,7 @@ import math
 import requests
 
 # --- КОНСТАНТЫ ---
-TOKEN = "bdcc5b722dd8bad73b205be6fff08267da7c121a"
+TOKEN = "294b1754c146ae261cf689ffbf8fcaaa5c993e2d"
 ORG_ID = "da0e7ea9-d216-11ec-0a80-08be00007acc" 
 STORE_ID = "da0f3443-d216-11ec-0a80-08be00007ace" 
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
@@ -130,4 +130,5 @@ with tab3:
         st.dataframe(st.session_state.archive, use_container_width=True, hide_index=True)
     else:
         st.info("Архив пуст")
+
 
