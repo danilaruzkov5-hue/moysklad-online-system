@@ -80,22 +80,37 @@ t1, t2, t3, t4, t5 = st.tabs(["📦 ИП", "🏢 ООО", "📜 Архив от�
 
 def render_table(storage_type, key):
     df = st.session_state.df
-    filt = df[df["Тип"] == storage_type]
+    # 1. Фильтруем данные по типу (ИП/ООО)
+    filt = df[df["Тип"] == storage_type].copy()
+    
+    # 2. Применяем поиск, если он введен
     if search:
         filt = filt[filt.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
 
     if filt.empty:
         st.info(f"На складе {storage_type} пусто")
     else:
+        # Отображаем таблицу
         sel = st.dataframe(filt, use_container_width=True, hide_index=True, 
                            selection_mode="multi-row", on_select="rerun", key=f"t_{key}")
         
-        idx = sel.get("selection", {}).get("rows", [])
-        if idx and st.button(f"🚀 Завершить и отгрузить ({storage_type})", key=f"b_{key}"):
-            shipped = filt.iloc[idx].copy()
-            st.session_state.arch = pd.concat([st.session_state.arch, shipped], ignore_index=True)
-            st.session_state.df = st.session_state.df[~st.session_state.df['uuid'].isin(shipped['uuid'])]
-            st.rerun()
+        # Получаем выбранные строки
+        selected_indices = sel.get("selection", {}).get("rows", [])
+        
+        if selected_indices:
+            if st.button(f"🚀 Завершить и отгрузить ({storage_type})", key=f"b_{key}"):
+                # Ищем товары по их настоящим индексам в отфильтрованном списке
+                shipped = filt.iloc[selected_indices].copy()
+                
+                # Добавляем в архив
+                st.session_state.arch = pd.concat([st.session_state.arch, shipped], ignore_index=True)
+                
+                # Удаляем из основного списка по UUID (самый надежный способ)
+                shipped_uuids = shipped['uuid'].tolist()
+                st.session_state.df = st.session_state.df[~st.session_state.df['uuid'].isin(shipped_uuids)].reset_index(drop=True)
+                
+                st.success("Отгружено!")
+                st.rerun()
 
 with t1: render_table("ИП", "ip")
 with t2: render_table("ООО", "ooo")
@@ -135,4 +150,5 @@ with t5:
         st.subheader("Сводка общего количества по баркодам")
         summary = st.session_state.df.groupby("Баркод")["Кол-во"].sum().reset_index()
         st.dataframe(summary, use_container_width=True, hide_index=True)
+
 
