@@ -92,7 +92,7 @@ def render_simple_table(storage_type, key):
                     conn.commit()
                 st.rerun()
     else: st.info("Пусто")
-        with t1: render_simple_table("ИП", "ip")
+         with t1: render_simple_table("ИП", "ip")
 with t2: render_simple_table("ООО", "ooo")
 
 with t3:
@@ -122,5 +122,6 @@ with t5:
     if not df_all.empty:
         res = df_all.groupby("barcode")["quantity"].sum().reset_index()
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
