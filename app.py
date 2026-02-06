@@ -75,7 +75,8 @@ if not st.session_state.df.empty:
 st.divider()
 
 # --- ПОИСК ---
-search_query = st.text_input("🔍 Поиск по Баркоду, Артикулу или Номеру короба")
+search_query = st.text_input("🔍 Поиск по Баркоду, Артикулу или Наименованию")
+sq = search_query 
 
 # --- ВКЛАДКИ ---
 tab1, tab2, tab3 = st.tabs(["📊 Остатки ИП", "🏢 Остатки ООО", "📦 Архив отгрузок"])
@@ -141,6 +142,7 @@ with tab3:
                     st.session_state.archive = st.session_state.archive.drop(st.session_state.archive.index[idx]).reset_index(drop=True)
                     save_data()
                     st.rerun()
+
 
 
 
