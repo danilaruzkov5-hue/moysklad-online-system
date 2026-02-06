@@ -1,54 +1,54 @@
 import streamlit as st
 import pandas as pd
 import requests
+import sqlite3
 import math
 from datetime import datetime
 import io
 
-# --- ТВОИ ДАННЫЕ (ОБЯЗАТЕЛЬНО ЗАПОЛНИ) ---
+# --- НАСТРОЙКИ (ТВОИ ДАННЫЕ) ---
+
+HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 TOKEN = "294b1754c146ae261cf689ffbf8fcaaa5c993e2d"
 ORG_ID = "da0e7ea9-d216-11ec-0a80-08be00007acc" 
-STORE_ID = "da0f3443-d216-11ec-0a80-08be00007ace" 
-HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
+STORE_ID = "da0f3443-d216-11ec-0a80-08be00007ace
+# --- БАЗА ДАННЫХ (Для работы 10+ человек) ---
+def get_db_connection():
+    return sqlite3.connect("warehouse.db", check_same_thread=False)
 
-st.set_page_config(layout="wide", page_title="Складской Терминал МС")
+def init_db():
+    conn = get_db_connection()
+    conn.execute('''CREATE TABLE IF NOT EXISTS stock 
+        (uuid TEXT PRIMARY KEY, name TEXT, article TEXT, barcode TEXT, quantity REAL, box_num TEXT, type TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS archive 
+        (uuid TEXT PRIMARY KEY, name TEXT, article TEXT, barcode TEXT, quantity REAL, box_num TEXT, type TEXT, ship_date TEXT)''')
+    conn.commit()
 
-# --- ФУНКЦИИ ---
+init_db()
+
+st.set_page_config(layout="wide", page_title="Складской Терминал")
+
+# --- API МОЙСКЛАД ---
 def load_api_data():
-    url = "https://api.moysklad.ru/api/remap/1.2/report/stock/all?limit=1000"
+    # Фильтруем остатки именно по твоему складу
+    url = f"https://api.moysklad.ru/api/remap/1.2/report/stock/all?limit=1000&filter=store=https://api.moysklad.ru/api/remap/1.2/entity/store/{STORE_ID}"
     try:
         res = requests.get(url, headers=HEADERS)
         if res.status_code == 200:
-            rows = []
-            for i in res.json().get('rows', []):
-                name = i.get('name', '')
-                rows.append({
-                    "uuid": i.get('id'),
-                    "Наименование": name,
-                    "Артикул": i.get('article', '-'),
-                    "Баркод": i.get('code', '-'),
-                    "Кол-во": i.get('stock', 0),
-                    "Номер короба": "МС", 
-                    "Тип": "ИП" if "ИП" in name.upper() else "ООО"
-                })
-            return pd.DataFrame(rows)
+            return res.json().get('rows', [])
     except:
-        pass
-    return pd.DataFrame()
+        return []
+    return []
 
-# Инициализация состояний
-if 'df' not in st.session_state:
-    st.session_state.df = load_api_data()
-if 'arch' not in st.session_state:
-    st.session_state.arch = pd.DataFrame(columns=["uuid", "Наименование", "Артикул", "Баркод", "Кол-во", "Номер короба", "Тип"])
+def get_df_from_db(table="stock"):
+    return pd.read_sql(f"SELECT * FROM {table}", get_db_connection())
 
 # --- ИНТЕРФЕЙС ---
-st.title("📦 Система управления складом")
+st.title("📦 Единая база склада (ИП / ООО)")
 
-# Боковая панель: Приемка
 with st.sidebar:
     st.header("📥 Приемка товара")
-    uploaded_file = st.file_uploader("Загрузи Excel (Баркод, Кол-во, Короб)", type=["xlsx"])
+    uploaded_file = st.file_uploader("Загрузи Excel (Баркод, Кол-во, Номер короба)", type=["xlsx"])
     target_type = st.radio("Тип поставки:", ["ИП", "ООО"])
 
     if uploaded_file and st.button("➕ Добавить на баланс"):
@@ -56,106 +56,95 @@ with st.sidebar:
             new_data = pd.read_excel(uploaded_file)
             new_data.columns = ["Баркод", "Кол-во", "Номер короба"]
             
-            # --- ИСПРАВЛЕНИЕ №1: ПОИСК АРТИКУЛА И НАИМЕНОВАНИЯ ---
-            # Загружаем актуальные данные из МС для сопоставления
-            ref_df = load_api_data()
-            if not ref_df.empty:
-                # Создаем маппинг Баркод -> (Артикул, Наименование)
-                mapping = ref_df.set_index('Баркод')[['Артикул', 'Наименование']].to_dict('index')
-                
-                def enrich(row):
-                    info = mapping.get(str(row['Баркод']), {"Артикул": "Не найден", "Наименование": "Загружено из файла"})
-                    return pd.Series([info['Артикул'], info['Наименование']])
-                
-                new_data[["Артикул", "Наименование"]] = new_data.apply(enrich, axis=1)
-            else:
-                new_data["Артикул"] = "Ошибка базы"
-                new_data["Наименование"] = "Загружено из файла"
-
-            new_data["Тип"] = target_type
-            new_data["uuid"] = [f"file_{i}_{datetime.now().timestamp()}" for i in range(len(new_data))]
+            # Поиск Артикула в МойСклад
+            ms_rows = load_api_data()
+            mapping = {str(r.get('code')): (r.get('article', '-'), r.get('name', 'Неизвестно')) for r in ms_rows}
             
-            st.session_state.df = pd.concat([st.session_state.df, new_data], ignore_index=True)
-            st.success(f"Добавлено {len(new_data)} позиций")
+            conn = get_db_connection()
+            for _, row in new_data.iterrows():
+                art, name = mapping.get(str(row["Баркод"]), ("-", "Новый товар"))
+                uid = f"ID_{datetime.now().timestamp()}_{row['Баркод']}_{_}"
+                conn.execute("INSERT INTO stock VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (uid, name, art, str(row["Баркод"]), row["Кол-во"], str(row["Номер короба"]), target_type))
+            conn.commit()
+            st.success("Данные добавлены в общую базу!")
+            st.rerun()
         except Exception as e:
-            st.error(f"Ошибка в файле: {e}")
+            st.error(f"Ошибка файла: {e}")
 
-# Основная рабочая область
-if st.button("🔄 Обновить остатки из МойСклад"):
-    fresh_df = load_api_data()
-    if not st.session_state.arch.empty:
-        arch_ids = st.session_state.arch["uuid"].tolist()
-        st.session_state.df = fresh_df[~fresh_df["uuid"].isin(arch_ids)].reset_index(drop=True)
-    else:
-        st.session_state.df = fresh_df
-    st.rerun()
+search = st.text_input("🔍 Быстрый поиск (Баркод / Артикул)")
+t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📜 Архив", "💰 Хранение", "📊 Итого"])
 
-search = st.text_input("🔍 Поиск по Баркоду или Артикулу")
-
-t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📜 Архив отгрузки", "💰 Хранение", "📊 Итого по Баркодам"])
 def render_table(storage_type, key):
-    df = st.session_state.df
-    filt = df[df["Тип"] == storage_type]
+    df = get_df_from_db("stock")
+    filt = df[df["type"] == storage_type]
     
     if search:
         filt = filt[filt.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
     
-    if filt.empty:
-        st.info(f"На складе {storage_type} пусто")
-    else:
-        # Мульти-выбор строк для отгрузки
+    if not filt.empty:
         sel = st.dataframe(filt, use_container_width=True, hide_index=True, 
                            selection_mode="multi-row", on_select="rerun", key=f"t_{key}")
-        
         idx = sel.get("selection", {}).get("rows", [])
-        if idx and st.button(f"✅ Завершить и отгрузить ({storage_type})", key=f"b_{key}"):
-            shipped = filt.iloc[idx].copy()
-            st.session_state.arch = pd.concat([st.session_state.arch, shipped], ignore_index=True)
-            st.session_state.df = st.session_state.df[~st.session_state.df["uuid"].isin(shipped["uuid"])]
-            st.rerun()
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            if idx and st.button(f"✅ Отгрузить в архив", key=f"b_{key}"):
+                conn = get_db_connection()
+                for _, r in filt.iloc[idx].iterrows():
+                    conn.execute("INSERT INTO archive SELECT *, ? FROM stock WHERE uuid=?", (datetime.now().strftime("%d.%m %H:%M"), r['uuid']))
+                    conn.execute("DELETE FROM stock WHERE uuid=?", (r['uuid'],))
+                conn.commit()
+                st.rerun()
+        with c2:
+            if idx and st.button(f"🗑️ Удалить безвозвратно", key=f"del_{key}"):
+                conn = get_db_connection()
+                uids = filt.iloc[idx]['uuid'].tolist()
+                conn.executemany("DELETE FROM stock WHERE uuid=?", [(u,) for u in uids])
+                conn.commit()
+                st.rerun()
+    else: st.info(f"На складе {storage_type} пока ничего нет")
 
 with t1: render_table("ИП", "ip")
 with t2: render_table("ООО", "ooo")
 
 with t3:
-    if not st.session_state.arch.empty:
-        # --- ИСПРАВЛЕНИЕ №2: ВЫБОРОЧНЫЙ ВОЗВРАТ ---
-        # Позволяем выбрать, что именно вернуть, а не всё сразу
-        sel_arch = st.dataframe(st.session_state.arch, use_container_width=True, hide_index=True,
-                                selection_mode="multi-row", on_select="rerun", key="arch_table")
+    arch_df = get_df_from_db("archive")
+    if not arch_df.empty:
+        sel_a = st.dataframe(arch_df, use_container_width=True, hide_index=True, selection_mode="multi-row", key="arch_t")
         
+        # Скачивание Excel (Шаблон по ТЗ)
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            out_df = st.session_state.arch[["Баркод", "Кол-во", "Номер короба"]].copy()
-            # Добавляем пустые колонки по ТЗ
-            out_df["Дата приемки"] = ""
-            out_df["ФИО сотрудника"] = ""
-            out_df.to_excel(writer, index=False, sheet_name='Отгрузка')
-        
-        st.download_button("📥 Скачать Excel поставки", output.getvalue(), "postavka.xlsx", use_container_width=True)
-        
-        idx_arch = sel_arch.get("selection", {}).get("rows", [])
-        if idx_arch and st.button("🔙 Вернуть выбранные короба на склад"):
-            to_return = st.session_state.arch.iloc[idx_arch]
-            st.session_state.df = pd.concat([st.session_state.df, to_return], ignore_index=True)
-            st.session_state.arch = st.session_state.arch.drop(st.session_state.arch.index[idx_arch])
+            out = arch_df[["barcode", "quantity", "box_num"]].copy()
+            out.columns = ["Баркод", "Кол-во", "Номер короба"]
+            out["Дата приемки"], out["ФИО сотрудника"] = "", ""
+            out.to_excel(writer, index=False, sheet_name='Отгрузка')
+        st.download_button("📥 Скачать Excel отгрузки", output.getvalue(), "otgruzka.xlsx")
+
+        idx_a = sel_a.get("selection", {}).get("rows", [])
+        if idx_a and st.button("🔙 Вернуть на баланс"):
+            conn = get_db_connection()
+            for _, r in arch_df.iloc[idx_a].iterrows():
+                conn.execute("INSERT INTO stock SELECT uuid, name, article, barcode, quantity, box_num, type FROM archive WHERE uuid=?", (r['uuid'],))
+                conn.execute("DELETE FROM archive WHERE uuid=?", (r['uuid'],))
+            conn.commit()
             st.rerun()
-    else:
-        st.info("Архив пуст")
+    else: st.info("Архив пуст")
 
 with t4:
-    # Расчет хранения
-    total_boxes = len(st.session_state.df)
-    pallets = math.ceil(total_boxes / 16) if total_boxes > 0 else 0
-    st.metric("Всего коробов на остатке", total_boxes)
-    st.metric("Итого паллет", pallets)
-    st.metric("Стоимость хранения (сутки)", f"{pallets * 50} руб")
-    st.caption("Расчет: 16 коробов = 1 паллет = 50 руб/сутки")
+    df_all = get_df_from_db("stock")
+    boxes = len(df_all)
+    pallets = math.ceil(boxes / 16) if boxes > 0 else 0
+    st.metric("Всего коробов", boxes)
+    st.metric("Паллет к оплате", pallets)
+    st.metric("Стоимость/сутки", f"{pallets * 50} ₽")
 
 with t5:
-    if not st.session_state.df.empty:
-        st.subheader("Сводка общего количества по баркодам")
-        summary = st.session_state.df.groupby("Баркод")["Кол-во"].sum().reset_index()
-        st.dataframe(summary, use_container_width=True, hide_index=True)
+    df_all = get_df_from_db("stock")
+    if not df_all.empty:
+        res = df_all.groupby("barcode")["quantity"].sum().reset_index()
+        res.columns = ["Баркод", "Общее количество"]
+        st.dataframe(res, use_container_width=True, hide_index=True)
 
 
