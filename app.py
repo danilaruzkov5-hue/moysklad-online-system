@@ -123,7 +123,7 @@ with t3:
         if selected_arch_rows:
             st.write(f"Выбрано в архиве: {len(selected_arch_rows)}")
             ca1, ca2 = st.columns(2)
-            if ca1.button("🔙 Вернуть на баланс", key="restore_arch"):
+            if ca1.button("🔙 Вернуть обратно", key="restore_arch"):
                 with engine.connect() as conn:
                     for idx in selected_arch_rows:
                         target_id = arch_df.iloc[idx]['uuid']
@@ -154,4 +154,5 @@ with t5:
         res = df_all.groupby("barcode")["quantity"].sum().reset_index()
         res.columns = ["Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
