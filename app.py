@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 import math
 import requests
+import io
 
-# --- НАСТРОЙКИ ---
+# --- 1. НАСТРОЙКИ (ОБЯЗАТЕЛЬНО ВСТАВЬ СВОИ ID) ---
 TOKEN = "294b1754c146ae261cf689ffbf8fcaaa5c993e2d"
 ORG_ID = "da0e7ea9-d216-11ec-0a80-08be00007acc" 
 STORE_ID = "da0f3443-d216-11ec-0a80-08be00007ace" 
@@ -11,7 +12,7 @@ HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json
 
 st.set_page_config(layout="wide", page_title="Складской Терминал")
 
-# 1. Функция загрузки
+# --- 2. ФУНКЦИИ API ---
 def load_initial_data():
     url = "https://api.moysklad.ru/api/remap/1.2/report/stock/all"
     try:
@@ -35,7 +36,6 @@ def load_initial_data():
         pass
     return pd.DataFrame()
 
-# 2. Функция списания
 def create_ms_loss(product_id, quantity):
     url = "https://api.moysklad.ru/api/remap/1.2/entity/loss"
     data = {
@@ -45,27 +45,26 @@ def create_ms_loss(product_id, quantity):
     }
     requests.post(url, headers=HEADERS, json=data)
 
-# --- ИНИЦИАЛИЗАЦИЯ ---
+# --- 3. СОСТОЯНИЕ (SESSION STATE) ---
 if 'archive' not in st.session_state:
     st.session_state.archive = pd.DataFrame()
 
-# Загружаем данные один раз, чтобы они не возвращались после отгрузки
 if 'df' not in st.session_state:
     st.session_state.df = load_initial_data()
 
+# --- 4. ИНТЕРФЕЙС ---
 st.title("📦 Система управления складом")
 
-# Сайдбар для обновления данных
-if st.sidebar.button("🔄 ОБНОВИТЬ ИЗ МОЙСКЛАД"):
+if st.sidebar.button("🔄 ОБНОВИТЬ ОСТАТКИ"):
     st.session_state.df = load_initial_data()
     st.rerun()
 
-# МЕТРИКИ (как на скриншотах)
-if st.session_state.df is not None and not st.session_state.df.empty:
+# Метрики
+if not st.session_state.df.empty:
     total_boxes = len(st.session_state.df)
     pallets = math.ceil(total_boxes / 16)
     c1, c2, c3 = st.columns(3)
-    c1.metric("Всего коробов на складе", total_boxes)
+    c1.metric("Всего коробов", total_boxes)
     c2.metric("Расчетное кол-во паллетов", pallets)
     c3.metric("Стоимость хранения / сутки", f"{pallets * 50} ₽")
 
@@ -75,114 +74,60 @@ search_query = st.text_input("🔍 Поиск по Артикулу или На�
 tab1, tab2, tab3 = st.tabs(["📦 Остатки ИП", "🏢 Остатки ООО", "📜 Архив отгрузок"])
 
 def render_tab(storage_type, key_suffix):
-    # Берем данные из памяти
     df_all = st.session_state.df
-    if df_all is None or df_all.empty:
-        st.warning("Нет данных. Нажмите 'Обновить' в боковом меню.")
+    if df_all.empty:
+        st.warning("Нет данных.")
         return
 
-    # Фильтруем для текущей вкладки
     filtered_df = df_all[df_all["Направление(склад)"] == storage_type].reset_index(drop=True)
     
     if search_query:
         sq = search_query.lower()
-        filtered_df = filtered_df[
-            filtered_df['Наименование'].str.lower().str.contains(sq) | 
-            filtered_df['Артикул'].astype(str).str.lower().str.contains(sq)
-        ]
+        filtered_df = filtered_df[filtered_df['Наименование'].str.lower().str.contains(sq) | filtered_df['Артикул'].astype(str).str.lower().str.contains(sq)]
 
     if filtered_df.empty:
         st.info(f"На складе {storage_type} пусто.")
         return
 
-    # Таблица (как на видео)
-    event = st.dataframe(
-        filtered_df,
-        use_container_width=True,
-        hide_index=True,
-        selection_mode="multi-row",
-        on_select="rerun",
-        key=f"table_{key_suffix}"
-    )
-    qty_to_ship = st.number_input("Количество для отгрузки", min_value=1, value=1, key=f"qty_{key_suffix}")
+    event = st.dataframe(filtered_df, use_container_width=True, hide_index=True, selection_mode="multi-row", on_select="rerun", key=f"t_{key_suffix}")
+    qty = st.number_input("Кол-во", min_value=1, value=1, key=f"q_{key_suffix}")
 
-    # КНОПКА ОТГРУЗКИ
-    if st.button(f"🚀 ОТГРУЗИТЬ ВЫБРАННОЕ ({storage_type})", key=f"btn_{key_suffix}"):
-        selected_rows = event.get("selection", {}).get("rows", [])
-        
-        if selected_rows:
+    if st.button(f"🚀 ОТГРУЗИТЬ ({storage_type})", key=f"b_{key_suffix}"):
+        selected = event.get("selection", {}).get("rows", [])
+        if selected:
             ids_to_remove = []
-            for idx in selected_rows:
+            for idx in selected:
                 item = filtered_df.iloc[idx].copy()
-                
-                # 1. API запрос
-                create_ms_loss(item['uuid'], qty_to_ship)
-                
-                # 2. Добавляем в архив
-                item['Отгружено'] = qty_to_ship
+                create_ms_loss(item['uuid'], qty)
+                item['Отгружено'] = qty
                 st.session_state.archive = pd.concat([st.session_state.archive, pd.DataFrame([item])], ignore_index=True)
-                
-                # 3. Сохраняем ID для удаления из общего списка
                 ids_to_remove.append(item['uuid'])
-            
-            # САМАЯ ВАЖНАЯ ЧАСТЬ: Удаляем отгруженное из основной переменной
             st.session_state.df = st.session_state.df[~st.session_state.df['uuid'].isin(ids_to_remove)].reset_index(drop=True)
-            
-            st.success("Успешно отгружено!")
             st.rerun()
         else:
-            st.error("Сначала выделите товар галочкой в таблице!")
+            st.error("Выдели товары!")
 
 with tab1: render_tab("ИП", "ip")
 with tab2: render_tab("ООО", "ooo")
+
 with tab3:
     st.subheader("📜 Архив отгрузок")
     if not st.session_state.archive.empty:
-        # Таблица архива с выбором строк
-        archive_event = st.dataframe(
-            st.session_state.archive,
-            use_container_width=True,
-            hide_index=True,
-            selection_mode="multi-row",
-            on_select="rerun",
-            key="archive_table"
-        )
-
-        col_arch1, col_arch2 = st.columns(2)
+        arch_event = st.dataframe(st.session_state.archive, use_container_width=True, hide_index=True, selection_mode="multi-row", on_select="rerun", key="arch_t")
         
-        with col_arch1:
-            if st.button("⬅️ ВЕРНУТЬ ВЫБРАННОЕ В ОСТАТКИ", use_container_width=True):
-                selected_archive_rows = archive_event.get("selection", {}).get("rows", [])
-                if selected_archive_rows:
-                    items_to_return = st.session_state.archive.iloc[selected_archive_rows]
-                    ids_to_return = items_to_return['uuid'].tolist()
-                    
-                    # Возвращаем в основную таблицу
-                    st.session_state.df = pd.concat([st.session_state.df, items_to_return], ignore_index=True)
-                    # Убираем из архива
-                    st.session_state.archive = st.session_state.archive[~st.session_state.archive['uuid'].isin(ids_to_return)].reset_index(drop=True)
-                    
-                    st.success("Товары возвращены в остатки!")
+        ca1, ca2 = st.columns(2)
+        with ca1:
+            if st.button("⬅️ ВЕРНУТЬ В ОСТАТКИ", use_container_width=True):
+                sel_arch = arch_event.get("selection", {}).get("rows", [])
+                if sel_arch:
+                    items_ret = st.session_state.archive.iloc[sel_arch]
+                    st.session_state.df = pd.concat([st.session_state.df, items_ret], ignore_index=True)
+                    st.session_state.archive = st.session_state.archive[~st.session_state.archive['uuid'].isin(items_ret['uuid'])].reset_index(drop=True)
                     st.rerun()
-                else:
-                    st.error("Выдели товары галочками!")
-
-        with col_arch2:
-            # Конвертируем в CSV (текстовый формат, понятный любому компьютеру)
-            # Удаляем технический uuid перед выгрузкой
-            df_export = st.session_state.archive.copy()
-            if 'uuid' in df_export.columns:
-                df_export = df_export.drop(columns=['uuid'])
-            
-            # Кодировка utf-8-sig нужна, чтобы Excel на Mac/Windows понимал русский язык
-            csv_data = df_export.to_csv(index=False).encode('utf-8-sig')
-
-            st.download_button(
-                label="📥 СКАЧАТЬ АРХИВ (CSV/EXCEL)",
-                data=csv_data,
-                file_name="otgruzka_sklad.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
+        with ca2:
+            df_exp = st.session_state.archive.drop(columns=['uuid']) if 'uuid' in st.session_state.archive.columns else st.session_state.archive
+            csv = df_exp.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 СКАЧАТЬ АРХИВ (CSV)", data=csv, file_name="otgruzka.csv", mime="text/csv", use_container_width=True)
     else:
-        st.info("Архив пуст. Отгрузи товары, чтобы они появились здесь.")
+        st.info("Архив пуст.")
+
