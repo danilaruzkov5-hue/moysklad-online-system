@@ -14,23 +14,38 @@ st.set_page_config(layout="wide", page_title="Складской Термина�
 
 # 1. Загрузка данных из МойСклад (с учетом штрихкодов)
 def load_moysklad_data():
-    url = "https://api.moysklad.ru/api/remap/1.2/entity/product"
+    # Добавляем limit=1000, чтобы точно забрать все товары разом
+    url = "https://api.moysklad.ru/api/remap/1.2/entity/product?limit=1000"
     try:
         res = requests.get(url, headers=HEADERS)
         if res.status_code == 200:
             products = []
-            for i in res.json().get('rows', []):
-                # Берем первый штрихкод из списка, если он есть
-                bc = i.get('barcodes', [{}])[0].get('ean13', '') or i.get('code', '')
+            rows = res.json().get('rows', [])
+            
+            for i in rows:
+                # 1. Извлекаем Штрихкод (EAN13)
+                barcodes = i.get('barcodes', [])
+                barcode_value = barcodes[0].get('ean13') if barcodes else ""
+                
+                # 2. Извлекаем Код (который на скриншоте 2036964984)
+                # В API он называется 'code'
+                external_code = i.get('code', '')
+                
                 products.append({
                     "uuid": i.get('id'),
-                    "Артикул": i.get('article', ''),
-                    "Баркод": bc,
+                    "Артикул": i.get('article', ''), # Если пусто, будет пустая строка
+                    "Баркод": str(barcode_value) if barcode_value else str(external_code),
                     "Наименование": i.get('name', ''),
-                    "Цена": i.get('buyPrice', {}).get('value', 0) / 100
                 })
-            return pd.DataFrame(products)
-    except: pass
+            
+            df = pd.DataFrame(products)
+            # Принудительно очищаем строки от пробелов
+            df['Баркод'] = df['Баркод'].astype(str).str.strip()
+            return df
+        else:
+            st.error(f"Ошибка API: {res.status_code}")
+    except Exception as e:
+        st.error(f"Связь прервана: {e}")
     return pd.DataFrame()
 
 # 2. Инициализация состояний
@@ -112,4 +127,5 @@ with tab_calc:
     st.metric("Коробов на складе", total_boxes)
     st.metric("Итого паллет", pallets)
     st.metric("Стоимость хранения в сутки", f"{cost} руб.")
+
 
