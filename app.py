@@ -3,11 +3,10 @@ import pandas as pd
 import math
 import requests
 
-# --- КОНСТАНТЫ ---
+# --- НАСТРОЙКИ ---
 TOKEN = "294b1754c146ae261cf689ffbf8fcaaa5c993e2d"
 ORG_ID = "da0e7ea9-d216-11ec-0a80-08be00007acc" 
 STORE_ID = "da0f3443-d216-11ec-0a80-08be00007ace" 
-HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
 st.set_page_config(layout="wide", page_title="Складской Терминал")
 
@@ -21,7 +20,6 @@ def load_initial_data():
             rows = []
             for item in data.get('rows', []):
                 name = item.get('name', '')
-                # Определяем вкладку: если в имени есть ООО — в ООО, иначе всё в ИП
                 direction = "ООО" if "ООО" in name else "ИП"
                 rows.append({
                     "uuid": item.get('id'),
@@ -36,7 +34,7 @@ def load_initial_data():
         pass
     return pd.DataFrame()
 
-# 2. Функция списания (Loss)
+# 2. Функция списания
 def create_ms_loss(product_id, quantity):
     url = "https://api.moysklad.ru/api/remap/1.2/entity/loss"
     data = {
@@ -54,12 +52,18 @@ def create_ms_loss(product_id, quantity):
 if 'archive' not in st.session_state:
     st.session_state.archive = pd.DataFrame()
 
+# Загружаем данные только если их нет в памяти
 if 'df' not in st.session_state:
     st.session_state.df = load_initial_data()
 
 st.title("📦 Система управления складом")
 
-# МЕТРИКИ (Как на скриншоте)
+# Кнопка принудительного обновления в сайдбаре
+if st.sidebar.button("🔄 Обновить из МойСклад"):
+    st.session_state.df = load_initial_data()
+    st.rerun()
+
+# МЕТРИКИ (Скриншот a8eb536d)
 if st.session_state.df is not None and not st.session_state.df.empty:
     total_boxes = len(st.session_state.df)
     pallets = math.ceil(total_boxes / 16)
@@ -70,67 +74,64 @@ if st.session_state.df is not None and not st.session_state.df.empty:
 
 st.divider()
 
-search_query = st.text_input("🔍 Поиск по Баркоду, Артикулу или Наименованию")
+search_query = st.text_input("🔍 Поиск по Артикулу или Наименованию")
 tab1, tab2, tab3 = st.tabs(["📦 Остатки ИП", "🏢 Остатки ООО", "📜 Архив отгрузок"])
 
 def render_tab(storage_type, key_suffix):
-    df = st.session_state.df
-    if df is None or df.empty:
-        st.warning("Данные не загружены. Проверьте токен.")
+    df_all = st.session_state.df
+    if df_all is None or df_all.empty:
+        st.info("Нет данных для отображения")
         return
 
-    # Фильтрация
-    filtered_df = df[df["Направление(склад)"] == storage_type].reset_index(drop=True)
+    # Фильтруем данные для текущей вкладки
+    filtered_df = df_all[df_all["Направление(склад)"] == storage_type].reset_index(drop=True)
+    
     if search_query:
         sq = search_query.lower()
         filtered_df = filtered_df[
-            filtered_df['Баркод товара(штрихкод)'].astype(str).str.contains(sq) |
-            filtered_df['Наименование'].str.lower().str.contains(sq)
+            filtered_df['Наименование'].str.lower().str.contains(sq) | 
+            filtered_df['Артикул'].astype(str).str.lower().str.contains(sq)
         ]
 
     st.subheader(f"Остатки {storage_type}")
     
-    # ТАБЛИЦА С ВЫБОРОМ (Как в 1000011581.mp4)
+    # Таблица с мульти-выбором (как на видео 1000011581)
     event = st.dataframe(
-        filtered_df, 
-        use_container_width=True, 
-        hide_index=True, 
-        selection_mode="multi-row", 
-        on_select="rerun", 
+        filtered_df,
+        use_container_width=True,
+        hide_index=True,
+        selection_mode="multi-row",
+        on_select="rerun",
         key=f"table_{key_suffix}"
     )
+    qty_to_ship = st.number_input("Количество для отгрузки", min_value=1, value=1, key=f"qty_input_{key_suffix}")
 
-    qty_to_ship = st.number_input("Сколько штук отгружаем?", min_value=1, value=1, key=f"qty_{key_suffix}")
-if st.button(f"🚀 ОТГРУЗИТЬ ВЫБРАННОЕ", key=f"btn_{key_suffix}"):
-        # 1. Получаем индексы выбранных строк
-        selected_rows = event.get("selection", {}).get("rows", [])
+    # Исправленная кнопка отгрузки
+    if st.button(f"🚀 ОТГРУЗИТЬ ВЫБРАННОЕ ({storage_type})", key=f"btn_ship_{key_suffix}"):
+        selected_indices = event.get("selection", {}).get("rows", [])
         
-        if selected_rows:
-            # Создаем временный список для удаления, чтобы не сбить индексы в цикле
-            uuids_to_remove = []
-            
-            for idx in selected_rows:
+        if selected_indices:
+            ids_to_remove = []
+            for idx in selected_indices:
                 item = filtered_df.iloc[idx].copy()
                 
-                # 2. Списываем в МойСклад (API)
+                # 1. Списание через API
                 create_ms_loss(item['uuid'], qty_to_ship)
                 
-                # 3. Добавляем в архив
-                item['Кол-во'] = qty_to_ship
+                # 2. Перенос в архив
+                item['Отгружено'] = qty_to_ship
                 st.session_state.archive = pd.concat([st.session_state.archive, pd.DataFrame([item])], ignore_index=True)
                 
-                # Сохраняем ID товара для удаления
-                uuids_to_remove.append(item['uuid'])
+                # Сохраняем ID для удаления
+                ids_to_remove.append(item['uuid'])
             
-            # 4. САМОЕ ВАЖНОЕ: Удаляем отгруженные товары из основной таблицы в памяти
-            st.session_state.df = st.session_state.df[~st.session_state.df['uuid'].isin(uuids_to_remove)].reset_index(drop=True)
+            # 3. УДАЛЕНИЕ ИЗ ПАМЯТИ (чтобы исчезло из списка)
+            st.session_state.df = st.session_state.df[~st.session_state.df['uuid'].isin(ids_to_remove)].reset_index(drop=True)
             
-            st.success(f"Успешно отгружено позиций: {len(uuids_to_remove)}")
-            
-            # 5. Принудительно обновляем интерфейс
+            st.success("Отгрузка выполнена!")
             st.rerun()
         else:
-            st.error("Сначала выделите строки галочками!")
+            st.error("Ничего не выбрано!")
 
 with tab1: render_tab("ИП", "ip")
 with tab2: render_tab("ООО", "ooo")
@@ -138,8 +139,8 @@ with tab3:
     st.subheader("📜 Архив отгрузок")
     if not st.session_state.archive.empty:
         st.dataframe(st.session_state.archive, use_container_width=True, hide_index=True)
-    else:
-        st.info("Архив пуст")
-
+        if st.button("🗑 Очистить архив"):
+            st.session_state.archive = pd.DataFrame()
+            st.rerun()
 
 
