@@ -26,9 +26,9 @@ def init_db():
 
 init_db()
 
-st.set_page_config(layout="wide", page_title="Склад")
+st.set_page_config(layout="wide", page_title="Складской Терминал")
 
-# --- API ---
+# --- API МОЙСКЛАД ---
 def load_api_data():
     url = f"https://api.moysklad.ru/api/remap/1.2/report/stock/all?limit=1000&filter=store=https://api.moysklad.ru/api/remap/1.2/entity/store/{STORE_ID}"
     try:
@@ -36,12 +36,12 @@ def load_api_data():
         return res.json().get('rows', []) if res.status_code == 200 else []
     except: return []
 
-st.title("📦 Единая база склада")
+st.title("📦 Единая база склада (ИП / ООО)")
 
-# --- ПРИЕМКА ---
+# --- ПРИЕМКА ТОВАРА ---
 with st.sidebar:
     st.header("📥 Приемка")
-    uploaded_file = st.file_uploader("Загрузи Excel", type=["xlsx"])
+    uploaded_file = st.file_uploader("Загрузи Excel (Баркод, Кол-во, Номер короба)", type=["xlsx"])
     target_type = st.radio("Тип поставки:", ["ИП", "ООО"])
 
     if uploaded_file and st.button("➕ Добавить на баланс"):
@@ -67,75 +67,66 @@ with st.sidebar:
 search = st.text_input("🔍 Быстрый поиск (Баркод / Артикул)")
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📜 Архив", "💰 Хранение", "📊 Итого"])
 
-def render_table_with_selection(storage_type, key):
+def render_table(storage_type, key):
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
     if search:
         df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
     
     if not df.empty:
-        # Основное изменение: включаем мульти-выбор
-        event = st.dataframe(df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key=f"df_{key}")
+        sel = st.dataframe(df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key=f"t_{key}")
+        idx = sel.get("selection", {}).get("rows", [])
         
-        selected_rows = event.get("selection", {}).get("rows", [])
-        
-        if selected_rows:
-            st.write(f"Выбрано товаров: {len(selected_rows)}")
+        if idx:
             c1, c2 = st.columns(2)
-            if c1.button("✅ Отгрузить выбранное", key=f"ship_{key}"):
+            if c1.button(f"✅ Отгрузить в архив ({len(idx)})", key=f"ship_{key}"):
                 with engine.connect() as conn:
-                    for idx in selected_rows:
-                        target_id = df.iloc[idx]['uuid']
-                        conn.execute(text("INSERT INTO archive SELECT *, :d FROM stock WHERE uuid=:u"), {"d": datetime.now().strftime("%d.%m %H:%M"), "u": target_id})
-                        conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": target_id})
+                    for i in idx:
+                        r = df.iloc[i]
+                        conn.execute(text("INSERT INTO archive SELECT *, :d FROM stock WHERE uuid=:u"), {"d": datetime.now().strftime("%d.%m %H:%M"), "u": r['uuid']})
+                        conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": r['uuid']})
                     conn.commit()
                 st.rerun()
-            if c2.button("🗑️ Удалить выбранное", key=f"del_{key}"):
+            if c2.button(f"🗑️ Удалить безвозвратно ({len(idx)})", key=f"del_{key}"):
                 with engine.connect() as conn:
-                    for idx in selected_rows:
-                        target_id = df.iloc[idx]['uuid']
-                        conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": target_id})
+                    for i in idx:
+                        conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": df.iloc[i]['uuid']})
                     conn.commit()
                 st.rerun()
     else: st.info(f"На складе {storage_type} пока ничего нет")
 
-# --- ГЛАВНЫЕ БЛОКИ ---
-with t1:
-    render_table_with_selection("ИП", "ip")
-
-with t2:
-    render_table_with_selection("ООО", "ooo")
+with t1: render_table("ИП", "ip")
+with t2: render_table("ООО", "ooo")
 
 with t3:
     arch_df = pd.read_sql(text("SELECT * FROM archive"), engine)
     if not arch_df.empty:
-        # Галочки для архива
-        event_a = st.dataframe(arch_df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="df_arch")
+        sel_a = st.dataframe(arch_df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="arch_t")
         
-        selected_arch_rows = event_a.get("selection", {}).get("rows", [])
+        # EXCEL ПО ТЗ: Баркод, Кол-во, Короб, Дата, ФИО
+        export_df = arch_df[['barcode', 'quantity', 'box_num', 'ship_date']].copy()
+        export_df.columns = ["Баркод", "Кол-во", "Номер короба", "Дата приемки"]
+        export_df["ФИО сотрудника"] = ""
         
-        c1, c2 = st.columns(2)
-        with c1:
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                arch_df.to_excel(writer, index=False)
-            st.download_button("📥 Скачать Excel отгрузки", output.getvalue(), "otgruzka.xlsx")
-        
-        if selected_arch_rows:
-            st.write(f"Выбрано в архиве: {len(selected_arch_rows)}")
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            export_df.to_excel(writer, index=False, sheet_name='Отгрузка')
+        st.download_button("📥 Скачать Excel отгрузки", output.getvalue(), "otgruzka.xlsx")
+
+        idx_a = sel_a.get("selection", {}).get("rows", [])
+        if idx_a:
             ca1, ca2 = st.columns(2)
-            if ca1.button("🔙 Вернуть обратно", key="restore_arch"):
+            if ca1.button(f"🔙 Вернуть на баланс ({len(idx_a)})"):
                 with engine.connect() as conn:
-                    for idx in selected_arch_rows:
-                        target_id = arch_df.iloc[idx]['uuid']
-                        conn.execute(text("INSERT INTO stock SELECT uuid, name, article, barcode, quantity, box_num, type FROM archive WHERE uuid=:u"), {"u": target_id})
-                        conn.execute(text("DELETE FROM archive WHERE uuid=:u"), {"u": target_id})
+                    for i in idx_a:
+                        r = arch_df.iloc[i]
+                        conn.execute(text("INSERT INTO stock SELECT uuid, name, article, barcode, quantity, box_num, type FROM archive WHERE uuid=:u"), {"u": r['uuid']})
+                        conn.execute(text("DELETE FROM archive WHERE uuid=:u"), {"u": r['uuid']})
                     conn.commit()
                 st.rerun()
-            if ca2.button("🗑️ Удалить навсегда", key="final_del_arch"):
+            if ca2.button(f"🔥 Удалить навсегда ({len(idx_a)})"):
                 with engine.connect() as conn:
-                    for idx in selected_arch_rows:
-                        target_id = arch_df.iloc[idx]['uuid']
-                        conn.execute(text("DELETE FROM archive WHERE uuid=:u"), {"u": target_id})
+                    for i in idx_a:
+                        conn.execute(text("DELETE FROM archive WHERE uuid=:u"), {"u": arch_df.iloc[i]['uuid']})
                     conn.commit()
                 st.rerun()
     else: st.info("Архив пуст")
@@ -151,8 +142,9 @@ with t4:
 with t5:
     df_all = pd.read_sql(text("SELECT * FROM stock"), engine)
     if not df_all.empty:
-        res = df_all.groupby("barcode")["quantity"].sum().reset_index()
-        res.columns = ["Баркод", "Общее количество"]
+        # Группировка по типу и баркоду для наглядности
+        res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
+        res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
 
 
