@@ -37,8 +37,19 @@ if 'arch' not in st.session_state: st.session_state.arch = pd.DataFrame(columns=
 
 st.title("📦 Управление складом")
 
+# Измененная логика загрузки с фильтрацией архива
 if st.button("🔄 Обновить остатки из МойСклад"):
-    st.session_state.df = load_data()
+    # 1. Загружаем свежие данные из МС
+    fresh_df = load_data() 
+    
+    if not st.session_state.arch.empty:
+        # 2. Убираем из свежих данных те uuid, которые уже есть в архиве
+        archived_uuids = st.session_state.arch['uuid'].tolist()
+        st.session_state.df = fresh_df[~fresh_df['uuid'].isin(archived_uuids)].reset_index(drop=True)
+    else:
+        st.session_state.df = fresh_df
+        
+    st.success("Данные обновлены (отгруженные товары скрыты)")
     st.rerun()
 
 search = st.text_input("🔍 Поиск по названию, коду или артикулу")
@@ -102,5 +113,6 @@ with t4:
     st.metric("Товаров на складе", total_items)
     st.metric("Паллет", pallets)
     st.metric("Стоимость (50р/паллет)", f"{pallets * 50} руб/сутки")
+
 
 
