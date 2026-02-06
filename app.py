@@ -7,12 +7,13 @@ import io
 from sqlalchemy import create_engine, text
 
 # --- НАСТРОЙКИ (ТВОИ ДАННЫЕ) ---
-TOKEN = "294b1754c146ae261cf689ffbf8fcaaa5c993e2d"
-ORG_ID = "da0e7ea9-d216-11ec-0a80-08be00007acc" 
-STORE_ID = "da0f3443-d216-11ec-0a80-08be00007ace"
+TOKEN = "284b1754c346aa281cf689ffbfbfcaba5c883e2d"
+ORG_ID = "da8e7ea9-d216-11ec-0a80-088e00087acc"
+STORE_ID = "da8f3443-d216-11ec-0a80-088e00087ace"
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
-# --- ПОДКЛЮЧЕНИЕ К БАЗЕ ---
+# --- ПОДКЛЮЧЕНИЕ К БАЗЕ (Neon или локально) ---
+# Берем ссылку из Secrets, которую ты настроил
 DB_URL = st.secrets.get("DB_URL", "sqlite:///warehouse.db")
 engine = create_engine(DB_URL)
 
@@ -27,24 +28,27 @@ def init_db():
 init_db()
 
 st.set_page_config(layout="wide", page_title="Складской Терминал")
-
+st.write(f"Текущая база: {st.secrets.get('DB_URL', 'НЕ ПОДКЛЮЧЕНО (Использую временную)')[:20]}...")
 # --- API МОЙСКЛАД ---
 def load_api_data():
     url = f"https://api.moysklad.ru/api/remap/1.2/report/stock/all?limit=1000&filter=store=https://api.moysklad.ru/api/remap/1.2/entity/store/{STORE_ID}"
     try:
         res = requests.get(url, headers=HEADERS)
-        return res.json().get('rows', []) if res.status_code == 200 else []
-    except: return []
+        if res.status_code == 200:
+            return res.json().get('rows', [])
+    except:
+        return []
+    return []
 
 # --- ИНТЕРФЕЙС ---
 st.title("📦 Единая база склада (ИП / ООО)")
 
 with st.sidebar:
     st.header("📥 Приемка товара")
-    uploaded_file = st.file_uploader("Загрузи Excel", type=["xlsx"])
+    uploaded_file = st.file_uploader("Загрузи Excel (Баркод, Кол-во, Номер короба)", type=["xlsx"])
     target_type = st.radio("Тип поставки:", ["ИП", "ООО"])
 
-    if uploaded_file and st.button("➕ Добавить на баланс"):
+if uploaded_file and st.button("➕ Добавить на баланс"):
         try:
             new_data = pd.read_excel(uploaded_file)
             new_data.columns = ["Баркод", "Кол-во", "Номер короба"]
@@ -55,39 +59,49 @@ with st.sidebar:
                 for _, row in new_data.iterrows():
                     art, name = mapping.get(str(row["Баркод"]), ("-", "Новый товар"))
                     uid = f"ID_{datetime.now().timestamp()}_{row['Баркод']}_{_}"
-                    # Исправление типов данных для PostgreSQL
+                    
+                    # ИСПРАВЛЕНИЕ ТУТ: Превращаем всё в стандартные типы Python
                     conn.execute(text("INSERT INTO stock VALUES (:u, :n, :a, :b, :q, :bn, :t)"),
-                                {"u":str(uid), "n":str(name), "a":str(art), "b":str(row["Баркод"]), 
-                                 "q":float(row["Кол-во"]), "bn":str(row["Номер короба"]), "t":str(target_type)})
+                                {
+                                    "u": str(uid), 
+                                    "n": str(name), 
+                                    "a": str(art), 
+                                    "b": str(row["Баркод"]), 
+                                    "q": float(row["Кол-во"]), # Стандартное число с точкой
+                                    "bn": str(row["Номер короба"]), 
+                                    "t": str(target_type)
+                                })
                 conn.commit()
-            st.success("Данные добавлены в облако!")
+            st.success("Данные успешно сохранены в облако!")
             st.rerun()
         except Exception as e:
-            st.error(f"Ошибка: {e}")
+            st.error(f"Ошибка файла: {e}")
 
 search = st.text_input("🔍 Быстрый поиск (Баркод / Артикул)")
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📜 Архив", "💰 Хранение", "📊 Итого"])
 
 def render_table(storage_type, key):
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
+    
     if search:
         df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
     
     if not df.empty:
-        # Упрощенная таблица без on_select для стабильности
-        sel = st.dataframe(df, use_container_width=True, hide_index=True, selection_mode="multi-row", key=f"t_{key}")
-        idx = sel.selection.rows
+        sel = st.dataframe(df, use_container_width=True, hide_index=True, 
+                           selection_mode="multi-row", on_select="rerun", key=f"t_{key}")
+        idx = sel.get("selection", {}).get("rows", [])
         
         c1, c2 = st.columns(2)
-        if idx:
-            if c1.button(f"✅ Отгрузить выбранное", key=f"b_{key}"):
+        with c1:
+            if idx and st.button(f"✅ Отгрузить в архив", key=f"b_{key}"):
                 with engine.connect() as conn:
                     for _, r in df.iloc[idx].iterrows():
                         conn.execute(text("INSERT INTO archive SELECT *, :d FROM stock WHERE uuid=:u"), {"d": datetime.now().strftime("%d.%m %H:%M"), "u": r['uuid']})
                         conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": r['uuid']})
                     conn.commit()
                 st.rerun()
-            if c2.button(f"🗑️ Удалить выбранное", key=f"del_{key}"):
+        with c2:
+            if idx and st.button(f"🗑️ Удалить безвозвратно", key=f"del_{key}"):
                 with engine.connect() as conn:
                     for u in df.iloc[idx]['uuid']:
                         conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": u})
@@ -101,17 +115,17 @@ with t2: render_table("ООО", "ooo")
 with t3:
     arch_df = pd.read_sql(text("SELECT * FROM archive"), engine)
     if not arch_df.empty:
-        # Исправлено: безопасный метод получения индексов в архиве
         sel_a = st.dataframe(arch_df, use_container_width=True, hide_index=True, selection_mode="multi-row", key="arch_t")
         
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             out = arch_df[["barcode", "quantity", "box_num"]].copy()
-            out.columns = ["Баркод", "Кол-во", "Короб"]
-            out.to_excel(writer, index=False)
-        st.download_button("📥 Скачать отчет", output.getvalue(), "otgruzka.xlsx")
+            out.columns = ["Баркод", "Кол-во", "Номер короба"]
+            out["Дата приемки"], out["ФИО сотрудника"] = "", ""
+            out.to_excel(writer, index=False, sheet_name='Отгрузка')
+        st.download_button("📥 Скачать Excel отгрузки", output.getvalue(), "otgruzka.xlsx")
 
-        idx_a = sel_a.selection.rows
+        idx_a = sel_a.get("selection", {}).get("rows", [])
         if idx_a and st.button("🔙 Вернуть на баланс"):
             with engine.connect() as conn:
                 for _, r in arch_df.iloc[idx_a].iterrows():
@@ -127,7 +141,7 @@ with t4:
     pallets = math.ceil(boxes / 16) if boxes > 0 else 0
     st.metric("Всего коробов", boxes)
     st.metric("Паллет к оплате", pallets)
-    st.write(f"Стоимость/сутки: {pallets * 50} ₽")
+    st.metric("Стоимость/сутки", f"{pallets * 50} ₽")
 
 with t5:
     df_all = pd.read_sql(text("SELECT * FROM stock"), engine)
