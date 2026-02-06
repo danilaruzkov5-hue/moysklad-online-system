@@ -1,194 +1,136 @@
 import streamlit as st
 import pandas as pd
-import math
 import requests
-import os
+import math
 
-# --- КОНСТАНТЫ ---
+# --- НАСТРОЙКИ (Впиши свои данные) ---
 TOKEN = "bdcc5b722dd8bad73b205be6fff08267da7c121a"
-SHEET_ID = "1uF7RvQUIylmGDaco1nDhZo2GSU1OOeos511K5xqZY3w"
-# Ссылка для чтения данных из твоей Google Таблицы в формате CSV
-STOCK_URL = "https://script.google.com/macros/s/AKfycbwy0HjIVRjXwfvbHYEGKqu0jj7JckFfTzkfeCV5fxC1dEp2Lj9XuybQQ5lcCTAKVr6PYw/exec"
+ORG_ID = "da0e7ea9-d216-11ec-0a80-08be00007acc" # Можно найти в ссылке МС
+STORE_ID = "da0f3443-d216-11ec-0a80-08be00007ace"    # Можно найти в ссылке МС
+HEADERS = {
+    "Authorization": f"Bearer {TOKEN}",
+    "Content-Type": "application/json"
+}
 
-st.set_page_config(layout="wide", page_title="Складской Терминал Онлайн")
-st.title("📂 Система управления складом (ОНЛАЙН)")
+st.set_page_config(page_title="Терминал Отгрузки", layout="wide")
 
-def save_data(item_data=None):
-    if item_data:
-        script_url = "https://script.google.com/macros/s/AKfycbwehMYINOBcn4vJbEYB0ovpCRpNYjuWeVjRgtHJ7-sSeLLtJxhEbn2Dd6YZAC6mPQ8z0A/exec"
-        try:
-            import requests
-            requests.post(script_url, json=item_data)
-        except:
-            pass
+# Стиль как на скриншотах
+st.markdown("""
+    <style>
+    .main { background-color: #f5f5f5; }
+    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #007bff; color: white; }
+    </style>
+    """, unsafe_allow_html=True)
 
-@st.cache_data(ttl=10) # Обновлять данные из Google Таблицы каждые 10 секунд
-def load_initial_data():
-    # Запрашиваем реальные остатки из МойСклад
+# 1. Загрузка данных из МойСклад
+def load_ms_data():
     url = "https://api.moysklad.ru/api/remap/1.2/report/stock/all"
-    headers = {"Authorization": f"Bearer {TOKEN}"}
-    
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=HEADERS)
         if response.status_code == 200:
             data = response.json()
-            # Превращаем JSON из МойСклад в таблицу Pandas
             rows = []
             for item in data.get('rows', []):
+                # Проверяем ИП или ООО по названию или доп. полю
+                direction = "ИП" if "ИП" in item.get('name', '') else "ООО"
                 rows.append({
+                    "uuid": item.get('id'),
                     "Наименование": item.get('name'),
                     "Артикул": item.get('article', ''),
-                    "Баркод товара(штрихкод)": item.get('code', ''),
+                    "Баркод": item.get('code', ''),
                     "Кол-во": item.get('stock', 0),
-                    "Направление(склад)": "ИП" if "ИП" in item.get('name', '') else "ООО"
+                    "Номер короба": item.get('code', '—'), # Используем код как номер короба, если нет спец. поля
+                    "Направление": direction
                 })
-            df = pd.DataFrame(rows)
-            return df, pd.DataFrame(), True
-    except:
-        pass
-    return pd.DataFrame(), pd.DataFrame(), False
-
-    try:
-        # 2. Загрузка остатков напрямую из Google Таблицы (вместо STOCK_FILE)
-        df = pd.read_csv(STOCK_URL)
-        # 3. Создаем пустой архив (вместо ARCHIVE_FILE)
-        archive = pd.DataFrame()
-        
-        if not df.empty:
-            df['Направление(склад)'] = df['Направление(склад)'].fillna('ИП')
-            if 'Артикул' not in df.columns:
-                df['Артикул'] = "Арт-" + df['Баркод товара(штрихкод)'].astype(str).str[-4:]
-        
-        return df, archive, api_status
+            return pd.DataFrame(rows)
     except Exception as e:
-        st.error(f"Ошибка загрузки данных из облака: {e}")
-        return pd.DataFrame(), pd.DataFrame(), api_status
+        st.error(f"Ошибка API: {e}")
+    return pd.DataFrame()
 
-# --- ИНИЦИАЛИЗАЦИЯ ---
-if 'df' not in st.session_state:
-    df, archive, status = load_initial_data()
-    st.session_state.df = df
-    st.session_state.archive = archive
-    st.session_state.api_connected = status
+# 2. Функция списания (Отгрузка)
+def create_ms_loss(product_id, quantity):
+    url = "https://api.moysklad.ru/api/remap/1.2/entity/loss"
+    data = {
+        "organization": {"meta": {"href": f"https://api.moysklad.ru/api/remap/1.2/entity/organization/{ORG_ID}", "type": "organization", "mediaType": "application/json"}},
+        "store": {"meta": {"href": f"https://api.moysklad.ru/api/remap/1.2/entity/store/{STORE_ID}", "type": "store", "mediaType": "application/json"}},
+        "positions": [{
+            "quantity": float(quantity),
+            "assortment": {"meta": {"href": f"https://api.moysklad.ru/api/remap/1.2/entity/product/{product_id}", "type": "product", "mediaType": "application/json"}}
+        }]
+    }
+    res = requests.post(url, headers=HEADERS, json=data)
+    return res.status_code == 201
 
-# Индикатор связи
-if st.session_state.api_connected:
-    st.success("🟢 Связь с МойСклад установлена")
-else:
-    st.warning("🟡 Работа в автономном режиме")
-with st.expander("📥 Загрузка новой приемки из Excel"):
-    data_input = st.text_area("Вставьте данные из Excel (Баркод, Кол-во, Короб)")
-    if st.button("Создать приемку в МойСклад"):
-        # Тут будет код, который берет текст и через requests.post 
-        # создает документ 'purchase' в МойСклад
-        st.success("Данные отправлены в МойСклад!")
-# --- МЕТРИКИ ---
-if not st.session_state.df.empty:
-    total_boxes = len(st.session_state.df)
-    pallets = math.ceil(total_boxes / 16) if total_boxes > 0 else 0
-    daily_cost = pallets * 50
-    col_info1, col_info2, col_info3 = st.columns(3)
-    col_info1.metric("Всего коробов на складе", total_boxes)
-    col_info2.metric("Расчетное кол-во паллетов", pallets)
-    col_info3.metric("Стоимость хранения / сутки", f"{daily_cost} ₽")
+# --- ШАПКА САЙТА ---
+col_logo, col_title = st.columns([1, 4])
+with col_logo:
+    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/a/a9/Amazon_logo.svg/1024px-Amazon_logo.svg.png", width=100) # Замени на свой логотип
+with col_title:
+    st.title("ТЕРМИНАЛ ОТГРУЗКИ")
 
-st.divider()
+if 'df' not in st.session_state or st.sidebar.button("ОБНОВИТЬ ДАННЫЕ"):
+    with st.spinner('Загрузка из МойСклад...'):
+        st.session_state.df = load_ms_data()
 
-# --- ПОИСК ---
-search_query = st.text_input("🔍 Поиск по Баркоду, Артикулу или Наименованию")
-sq = search_query 
+# Поиск
+search_query = st.text_input("🔍 Поиск по Артикулу или Наименованию", "").lower()
 
-# --- ВКЛАДКИ ---
-tab1, tab2, tab3 = st.tabs(["📊 Остатки ИП", "🏢 Остатки ООО", "📦 Архив отгрузок"])
+tab1, tab2 = st.tabs(["📦 ИП", "🏢 ООО"])
 
-def render_tab(storage_type_filter, key_suffix):
-    # Фильтруем данные для отображения
-    # Замени строку 86 на эту:
-# Более надежный способ фильтрации:
-    if "Направление(склад)" in st.session_state.df.columns:
-        mask = st.session_state.df["Направление(склад)"].astype(str).str.contains(storage_type_filter, na=False)
-    else:
-        # Если столбец не найден, показываем все товары этой категории
-        mask = [True] * len(st.session_state.df)
-    filtered_df = st.session_state.df[mask]
-    
-    if sq:
-            filtered_df = filtered_df[
-                filtered_df['Баркод товара(штрихкод)'].astype(str).str.contains(sq) |
-                filtered_df['Артикул'].astype(str).str.contains(sq) |
-                filtered_df['Наименование'].astype(str).str.contains(sq)
-            ]
-    st.subheader(f"Остатки {key_suffix}")
-    if filtered_df.empty:
-        st.info("В этой категории товаров нет")
+def render_tab(storage_type):
+    df = st.session_state.df
+    if df.empty:
+        st.info("Данные не загружены")
         return
 
-    # Отображаем таблицу
-    event = st.dataframe(filtered_df, use_container_width=True, on_select="rerun", selection_mode="multi-row", key=f"table_{key_suffix}")
+    # Фильтрация
+    filtered_df = df[df["Направление"] == storage_type]
+    if search_query:
+        filtered_df = filtered_df[
+            filtered_df['Артикул'].str.lower().str.contains(search_query) | 
+            filtered_df['Наименование'].str.lower().str.contains(search_query)
+        ]
     
-    # Логика отгрузки
-# 1. Поле для выбора количества (добавь ПЕРЕД кнопкой)
-    qty_to_ship = st.number_input("Сколько штук отгружаем?", min_value=1, value=1, key=f"qty_{key_suffix}")
+    filtered_df = filtered_df.reset_index(drop=True)
 
-    # 2. Твоя кнопка (оставляем как есть)
-    if st.button(f"🚀 ОТГРУЗИТЬ ВЫБРАННЫЕ", key=f"btn_{key_suffix}"):
-        if event.selection.rows:
-            # Получаем индексы выбранных строк
-            selected_indices = filtered_df.index[event.selection.rows]
-            
-            # Цикл для отправки каждой выбранной позиции в Google Таблицу
-            for idx in selected_indices:
-                item_to_send = st.session_state.df.loc[idx].to_dict()
-                # ПОДМЕНЯЕМ количество на то, которое ты ввел в поле выше
-                item_to_send['Кол-во'] = qty_to_ship 
-                
-                # Отправляем именно это количество в Google
-                save_data(item_to_send)
-            
-# Создаем запись для архива
-            shipped_items = st.session_state.df.loc[selected_indices].copy()
-            
-            # ВАЖНО: Мы заменяем старое общее количество на то, которое реально отгрузили
-            shipped_items['Кол-во'] = qty_to_ship 
-            
-            # Добавляем в архив на сайте
-            st.session_state.archive = pd.concat([st.session_state.archive, shipped_items], ignore_index=True)
-            
-            # Удаляем из основного списка (или уменьшаем количество)
-            st.session_state.df = st.session_state.df.drop(selected_indices).reset_index(drop=True)
-            
-            st.rerun()
+    # Статистика (Паллеты и Хранение)
+    unique_boxes = filtered_df['Номер короба'].nunique()
+    pallets = math.ceil(unique_boxes / 16)
+    
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Всего коробов", unique_boxes)
+    c2.metric("Паллетов", pallets)
+    c3.metric("Хранение (сутки)", f"{pallets * 50} ₽")
+
+    st.write("---")
+    # Список товаров с чекбоксами
+    selected_indices = []
+    for i, row in filtered_df.iterrows():
+        col_chk, col_txt = st.columns([0.1, 0.9])
+        if col_chk.checkbox("", key=f"chk_{storage_type}_{i}"):
+            selected_indices.append(i)
+        col_txt.write(f"{row['Артикул']} | {row['Наименование']} | Остаток: {row['Кол-во']} (Короб: {row['Номер короба']})")
+
+    st.write("---")
+    
+    qty_to_ship = st.number_input("Количество для отгрузки", min_value=1, value=1, key=f"q_{storage_type}")
+    
+    if st.button(f"ОТГРУЗИТЬ ВЫБРАННОЕ ({storage_type})"):
+        if not selected_indices:
+            st.warning("Выберите хотя бы один товар!")
         else:
-            st.error("Сначала выделите строки галочками!")
+            success_count = 0
+            for idx in selected_indices:
+                item = filtered_df.loc[idx]
+                if create_ms_loss(item['uuid'], qty_to_ship):
+                    success_count += 1
+            
+            st.success(f"Готово! Отгружено позиций: {success_count}")
+            st.session_state.df = load_ms_data() # Обновляем остатки
+            st.rerun()
 
-with tab1:
-    render_tab('ИП|Не указано', "ИП")
-
-with tab2:
-    render_tab('ООО|Юр лицо', "ООО")
-
-with tab3:
-    st.subheader("📦 Архив отгрузок")
-    if st.session_state.archive.empty:
-        st.info("Архив пока пуст")
-    else:
-        arc_event = st.dataframe(st.session_state.archive, use_container_width=True, on_select="rerun", selection_mode="multi-row", key="arc_table")
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            st.download_button("📥 Скачать отчет", st.session_state.archive.to_csv(index=False).encode('utf-8-sig'), "otgruzka.csv")
-        with c2:
-            if st.button("🔄 ВЕРНУТЬ НА СКЛАД"):
-                if arc_event.selection.rows:
-                    idx = arc_event.selection.rows
-                    to_return = st.session_state.archive.iloc[idx]
-                    st.session_state.df = pd.concat([st.session_state.df, to_return], ignore_index=True)
-                    st.session_state.archive = st.session_state.archive.drop(st.session_state.archive.index[idx]).reset_index(drop=True)
-                    save_data()
-                    st.rerun()
-
-
-
+with tab1: render_tab("ИП")
+with tab2: render_tab("ООО")
 
 
 
