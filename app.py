@@ -86,19 +86,21 @@ def render_table(storage_type, key):
         
         if idx:
             c1, c2 = st.columns(2)
-            selected_data = df.iloc[idx].copy()
+            selected_rows = df.iloc[idx].copy()
             
-            # Генерация Excel (Требование Дмитрия: скачать сразу в отгрузке)
+            # Подготовка файла поставки (Требование Дмитрия)
 out = io.BytesIO()
-            exp_df = selected_data[['barcode', 'quantity', 'box_num']].copy()
+            exp_df = selected_rows[['barcode', 'quantity', 'box_num']].copy()
             exp_df.columns = ["Баркод", "Кол-во", "Номер короба"]
-            for col in ["Дата забора", "Склад", "Юр. лицо", "ФИО сотрудника"]: exp_df[col] = ""
+            for col in ["Дата забора", "Склад", "Юр. лицо", "ФИО сотрудника"]:
+                exp_df[col] = "" # Шапки для ручного ввода
             with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
                 exp_df.to_excel(writer, index=False)
             
+            # Кнопка Завершить (сразу отгружает и дает скачать файл)
             if c1.button(f"✅ Завершить и отгрузить ({len(idx)})", key=f"ship_{key}"):
                 with engine.connect() as conn:
-                    for _, r in selected_data.iterrows():
+                    for _, r in selected_rows.iterrows():
                         conn.execute(text("INSERT INTO archive SELECT *, :d FROM stock WHERE uuid=:u"), 
                                     {"d": datetime.now().strftime("%d.%m %H:%M"), "u": r['uuid']})
                         conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": r['uuid']})
@@ -108,7 +110,8 @@ out = io.BytesIO()
                 st.rerun()
 
             if f"last_file_{key}" in st.session_state:
-                st.download_button("📥 СКАЧАТЬ ФАЙЛ ПОСТАВКИ", st.session_state[f"last_file_{key}"], f"delivery_{storage_type}.xlsx", type="primary")
+                st.download_button("📥 СКАЧАТЬ ЛИСТ ОТГРУЗКИ (EXCEL)", st.session_state[f"last_file_{key}"], 
+                                   f"delivery_{storage_type}.xlsx", type="primary")
 
             if c2.button(f"🗑️ Удалить ({len(idx)})", key=f"del_{key}"):
                 with engine.connect() as conn:
@@ -126,10 +129,10 @@ with t3:
     df_arch = pd.read_sql(text(f"SELECT * FROM archive WHERE type='{arch_type}'"), engine)
     if not df_arch.empty:
         st.dataframe(df_arch, use_container_width=True, hide_index=True)
-        # Кнопка скачивания всего архива (тоже просил оставить)
+        # Возможность скачать весь архив (дублирование функции)
         out_a = io.BytesIO()
-        df_arch[['barcode', 'quantity', 'box_num', 'ship_date']].to_excel(out_a, index=False)
-        st.download_button(f"📥 Скачать весь архив {arch_type}", out_a.getvalue(), f"full_archive_{arch_type}.xlsx")
+        df_arch.to_excel(out_a, index=False)
+        st.download_button(f"📥 Скачать весь архив {arch_type}", out_a.getvalue(), f"archive_{arch_type}.xlsx")
     else: st.info("Архив пуст")
 
 with t4:
