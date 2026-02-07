@@ -189,28 +189,36 @@ with t3:
     else: st.info("Архив пуст")
 
 with t4:
-    st.subheader("📊 Ежедневный отчет по хранению (23:00)")
+    st.subheader("📦 Текущий расчет (на данный момент)")
     
-    try:
-        # Читаем данные из Neon
-        history_df = pd.read_sql("SELECT * FROM daily_storage_logs ORDER BY log_date DESC", engine)
+    # Считаем то, что лежит в stock прямо сейчас
+    df_now = pd.read_sql(text("SELECT * FROM stock"), engine)
+    
+    if not df_now.empty:
+        b_ip = len(df_now[df_now['type'] == 'ИП'])
+        b_ooo = len(df_now[df_now['type'] == '000'])
+        p_ip, p_ooo = math.ceil(b_ip/16), math.ceil(b_ooo/16)
         
+        # Показываем текущие цифры
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Коробов (ИП/ООО)", f"{b_ip} / {b_ooo}")
+        col2.metric("Паллет всего", p_ip + p_ooo)
+        col3.metric("Итого к начислению", f"{(p_ip + p_ooo) * 50} ₽")
+    else:
+        st.write("Склад пуст")
+
+    st.divider()
+    
+    st.subheader("📊 История начислений (архив 23:00)")
+    try:
+        history_df = pd.read_sql("SELECT * FROM daily_storage_logs ORDER BY log_date DESC", engine)
         if not history_df.empty:
-            # Называем колонки точно как на твоем скриншоте
-            history_df.columns = [
-                "Дата", 
-                "Коробов ИП", "Паллет ИП", "Стоимость/сутки ИП, ₽", 
-                "Коробов ООО", "Паллет ООО", "Стоимость/сутки ООО, ₽", 
-                "Всего коробов", "Всего паллет", "Общая стоимость/сутки, ₽"
-            ]
-            # Выводим таблицу
+            history_df.columns = ["Дата", "Кор. ИП", "Пал. ИП", "₽ ИП", "Кор. ООО", "Пал. ООО", "₽ ООО", "Всего кор.", "Всего пал.", "Итого ₽"]
             st.dataframe(history_df, use_container_width=True, hide_index=True)
         else:
-            st.info("Таблица пока пуста. Данные появятся после 23:00.")
-            
-    except Exception as e:
-        # Теперь здесь есть команда, и SyntaxError исчезнет
-        st.error(f"Ошибка при загрузке таблицы: {e}")
+            st.info("История пуста. Первая запись в архиве появится сегодня в 23:00.")
+    except Exception:
+        st.warning("Таблица истории еще не создана.")
 
 with t5:
     df_all = pd.read_sql(text("SELECT * FROM stock"), engine)
@@ -218,6 +226,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
