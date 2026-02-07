@@ -201,8 +201,8 @@ def render_table(storage_type, key):
                 st.session_state[selection_key] = set()
                 reset_selection()
                 st.rerun()
-                    if search:
-                        st.info(f"💡 Всего выбрано (включая другие поиски): {count}")
+                if search:
+                    st.info(f"💡 Всего выбрано (включая другие поиски): {count}")
     else:
         st.info(f"Склад {storage_type} пуст")
 
