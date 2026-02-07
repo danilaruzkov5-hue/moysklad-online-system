@@ -122,6 +122,7 @@ def render_table(storage_type, key):
         # Стабильный ключ, зависящий только от вкладки и сброса, но НЕ от поиска
         table_key = f"table_{key}_{st.session_state.reset_counter}"
         
+# Рисуем таблицу
         sel = st.dataframe(
             display_df,
             use_container_width=True,
@@ -131,28 +132,22 @@ def render_table(storage_type, key):
             key=table_key
         )
         
-        # Безопасное получение выбранных строк
+        # Получаем данные о выборе
         selection = sel.get("selection", {})
         current_rows = selection.get("rows", [])
         
-        # ПРОВЕРКА: Обновляем UUID только если индексы корректны для текущего display_df
-        if current_rows:
-            max_idx = len(display_df) - 1
-            # Оставляем только те индексы, которые существуют в текущем срезе данных
-            valid_rows = [r for r in current_rows if r <= max_idx]
+        if st.active_script_run_reason == "widget_triggered":
+            visible_uuids = display_df['uuid'].tolist()
+            currently_selected_visible_uuids = display_df.iloc[current_rows]['uuid'].tolist()
             
-            if valid_rows:
-                current_selected_uuids = display_df.iloc[valid_rows]['uuid'].tolist()
-                
-                # Добавляем выбранные
-                for u in current_selected_uuids:
-                    st.session_state.selected_uuids.add(u)
-                
-                # Удаляем те, что были видны, но пользователь снял с них галочку
-                visible_uuids = display_df['uuid'].tolist()
-                for u in visible_uuids:
-                    if u not in current_selected_uuids and u in st.session_state.selected_uuids:
-                        st.session_state.selected_uuids.remove(u)
+           
+            for u in currently_selected_visible_uuids:
+                st.session_state.selected_uuids.add(u)
+            
+
+            for u in visible_uuids:
+                if u not in currently_selected_visible_uuids and u in st.session_state.selected_uuids:
+                    st.session_state.selected_uuids.remove(u)
 
         # Собираем данные для кнопок из глобального списка UUID
         final_selected_df = df[df['uuid'].isin(st.session_state.selected_uuids)]
@@ -270,6 +265,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
