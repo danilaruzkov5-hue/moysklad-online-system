@@ -5,6 +5,32 @@ import math
 from datetime import datetime
 import io
 from sqlalchemy import create_engine, text
+def check_and_log_daily():
+    now = datetime.now()
+    # Если время больше 23:00
+    if now.hour >= 23:
+        today_str = now.strftime("%Y-%m-%d")
+        with engine.connect() as conn:
+            # Проверяем, есть ли уже запись за сегодня
+            res = conn.execute(text("SELECT 1 FROM daily_storage_logs WHERE log_date = :d"), {"d": today_str}).fetchone()
+            
+            if not res:
+                # Считаем текущие остатки
+                df = pd.read_sql(text("SELECT * FROM stock"), engine)
+                b_ip = len(df[df['type'] == 'ИП'])
+                b_ooo = len(df[df['type'] == '000']) # У тебя в базе ООО это "000"
+                
+                p_ip = math.ceil(b_ip / 16)
+                p_ooo = math.ceil(b_ooo / 16)
+                
+                # Записываем в историю
+                conn.execute(text('''INSERT INTO daily_storage_logs VALUES (:d, :bi, :pi, :ci, :bo, :po, :co, :tc)'''), 
+                    {"d": today_str, "bi": b_ip, "pi": p_ip, "ci": p_ip * 50,
+                     "bo": b_ooo, "po": p_ooo, "co": p_ooo * 50, "tc": (p_ip + p_ooo) * 50})
+                conn.commit()
+
+# Запускаем проверку при каждом обновлении страницы
+check_and_log_daily()
 
 # --- НАСТРОЙКИ ---
 TOKEN = st.secrets["MS_TOKEN"]
@@ -156,12 +182,34 @@ with t3:
     else: st.info("Архив пуст")
 
 with t4:
-    df_all = pd.read_sql(text("SELECT * FROM stock"), engine)
-    boxes = len(df_all)
-    pallets = math.ceil(boxes / 16) if boxes > 0 else 0
-    st.metric("Коробов", boxes)
-    st.metric("Паллет", pallets)
-    st.write(f"Стоимость: {pallets * 50} ₽/сут")
+    st.subheader("📊 Ежедневный расчет хранения (16 кор. = 1 паллет = 50₽)")
+    
+    # Загружаем историю из Neon
+    try:
+        history = pd.read_sql("SELECT * FROM daily_storage_logs ORDER BY log_date DESC", engine)
+        
+        if not history.empty:
+            # Названия колонок как в ТЗ у Дмитрия
+            history.columns = [
+                "Дата", "Кор. ИП", "Паллет ИП", "₽ ИП", 
+                "Кор. ООО", "Паллет ООО", "₽ ООО", "ИТОГО ₽"
+            ]
+            
+            # Настройка отображения: красим таблицу
+            st.dataframe(
+                history.style.format({
+                    "₽ ИП": "{:.2f} ₽", 
+                    "₽ ООО": "{:.2f} ₽", 
+                    "ИТОГО ₽": "{:.2f} ₽"
+                }),
+                use_container_width=True, 
+                hide_index=True
+            )
+        else:
+            st.info("История будет создана автоматически сегодня в 23:00.")
+            
+    except Exception as e:
+        st.error(f"Ошибка базы: создайте таблицу daily_storage_logs в Neon")
 
 with t5:
     df_all = pd.read_sql(text("SELECT * FROM stock"), engine)
@@ -169,6 +217,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
