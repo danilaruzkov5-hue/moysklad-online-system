@@ -87,18 +87,23 @@ def render_table(storage_type, key):
         if idx:
             c1, c2 = st.columns(2)
             
-            # Генерация Excel для отгрузки (по твоей просьбе)
-ship_df = df.iloc[idx].copy()
+            # Подготовка Excel для отгрузки
+            selected_rows = df.iloc[idx].copy()
+            exp_df = selected_rows[['barcode', 'quantity', 'box_num']].copy()
+            exp_df.columns = ["Баркод", "Кол-во", "Номер короба"]
+            exp_df["ФИО"] = ""
+            exp_df["Склад"] = storage_type
+            
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                ship_df[['barcode', 'quantity', 'box_num']].to_excel(writer, index=False, sheet_name='Отгрузка')
+                exp_df.to_excel(writer, index=False, sheet_name='Отгрузка')
             
-            if c1.download_button(f"🚀 Завершить и скачать ({len(idx)})", data=output.getvalue(), file_name=f"otgruzka_{storage_type}.xlsx", key=f"ship_{key}"):
+            if c1.download_button(f"🚀 Отгрузить ({len(idx)})", data=output.getvalue(), file_name=f"shipment_{storage_type}.xlsx", key=f"dl_{key}"):
                 with engine.connect() as conn:
                     for i in idx:
-                        r = df.iloc[i]
-                        conn.execute(text("INSERT INTO archive SELECT *, :d FROM stock WHERE uuid=:u"), {"d": datetime.now().strftime("%d.%m %H:%M"), "u": r['uuid']})
-                        conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": r['uuid']})
+                        u = df.iloc[i]['uuid']
+                        conn.execute(text("INSERT INTO archive SELECT *, :d FROM stock WHERE uuid=:u"), {"d": datetime.now().strftime("%d.%m %H:%M"), "u": u})
+                        conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": u})
                     conn.commit()
                 reset_selection()
                 st.rerun()
@@ -123,12 +128,10 @@ with t3:
         arch_table_key = f"arch_table_{arch_type}_{st.session_state.reset_counter}"
         sel_a = st.dataframe(df_arch, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key=arch_table_key)
         
-        # Кнопка скачивания архива (как была у тебя)
-        export_df = df_arch[['barcode', 'quantity', 'box_num', 'ship_date']].copy()
-        export_df.columns = ["Баркод", "Кол-во", "Номер короба", "Дата приемки"]
+        # Экспорт всего архива
         output_a = io.BytesIO()
         with pd.ExcelWriter(output_a, engine='xlsxwriter') as writer:
-            export_df.to_excel(writer, index=False, sheet_name='Архив')
+            df_arch.to_excel(writer, index=False, sheet_name='Архив')
         st.download_button(f"📥 Скачать архив {arch_type}", output_a.getvalue(), f"archive_{arch_type}.xlsx")
 
         idx_a = sel_a.get("selection", {}).get("rows", [])
@@ -143,7 +146,7 @@ with t3:
                     conn.commit()
                 reset_selection()
                 st.rerun()
-            if ca2.button(f"🔥 Очистить архив ({len(idx_a)})", key=f"clear_btn_{arch_type}"):
+            if ca2.button(f"🔥 Очистить ({len(idx_a)})", key=f"clear_btn_{arch_type}"):
                 with engine.connect() as conn:
                     for i in idx_a:
                         conn.execute(text("DELETE FROM archive WHERE uuid=:u"), {"u": df_arch.iloc[i]['uuid']})
