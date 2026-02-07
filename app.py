@@ -7,7 +7,7 @@ import io
 from sqlalchemy import create_engine, text
 
 # --- НАСТРОЙКИ ---
-TOKEN = "294b1754c146ae261cf689ffbf8fcaaa5c993e2d"
+TOKEN = st.secrets["MS_TOKEN"]
 ORG_ID = "da0e7ea9-d216-11ec-0a80-08be00007acc" 
 STORE_ID = "da0f3443-d216-11ec-0a80-08be00007ace"
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
@@ -169,5 +169,6 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
