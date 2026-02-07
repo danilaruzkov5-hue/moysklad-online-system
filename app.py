@@ -42,6 +42,38 @@ HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json
 DB_URL = st.secrets.get("DB_URL", "sqlite:///warehouse.db")
 engine = create_engine(DB_URL)
 
+# --- ВСТАВЛЯЙ ПРЯМО СЮДА ---
+def check_and_log_daily():
+    now = datetime.now()
+    # Если время 23:00 или больше
+    if now.hour >= 23:
+        today_str = now.strftime("%Y-%m-%d")
+        with engine.connect() as conn:
+            # Проверяем, была ли запись
+            res = conn.execute(text("SELECT 1 FROM daily_storage_logs WHERE log_date = :d"), {"d": today_str}).fetchone()
+            
+            if not res:
+                # Если нет — считаем и записываем
+                df = pd.read_sql(text("SELECT * FROM stock"), engine)
+                b_ip = len(df[df['type'] == 'ИП'])
+                b_ooo = len(df[df['type'] == '000'])
+                
+                # 16 кор = 1 паллет
+                p_ip = math.ceil(b_ip / 16)
+                p_ooo = math.ceil(b_ooo / 16)
+                
+                # Записываем в базу
+                conn.execute(text('''INSERT INTO daily_storage_logs 
+                    VALUES (:d, :bi, :pi, :ci, :bo, :po, :co, :tb, :tp, :tc)'''), 
+                    {"d": today_str, "bi": b_ip, "pi": p_ip, "ci": p_ip*50,
+                     "bo": b_ooo, "po": p_ooo, "co": p_ooo*50,
+                     "tb": b_ip+b_ooo, "tp": p_ip+p_ooo, "tc": (p_ip+p_ooo)*50})
+                conn.commit()
+
+# Обязательно запускаем эту функцию!
+check_and_log_daily()
+# ---------------------------
+
 def init_db():
     with engine.connect() as conn:
         conn.execute(text('''CREATE TABLE IF NOT EXISTS stock 
@@ -211,6 +243,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
