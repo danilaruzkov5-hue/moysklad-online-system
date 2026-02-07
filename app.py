@@ -107,32 +107,42 @@ search = st.text_input("🔍 Быстрый поиск (Баркод / Арти�
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📦 Архив", "📊 Хранение", "🧾 Итого"])
 
 def render_table(storage_type, key):
-    # Хранилище UUID в сессии (наша "корзина")
+    # Хранилище UUID в сессии
     selection_key = f"selected_uuids_{key}"
     if selection_key not in st.session_state:
         st.session_state[selection_key] = set()
 
-    # Загрузила данные из базы
+    # Загрузила данные
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
     
     if df.empty:
         st.info(f"Склад {storage_type} пуст")
         return
 
-    # --- ГЛАВНЫЙ СЕКРЕТ ---
-    # Добавляем временную колонку " " (пробел), чтобы она выглядела как стандартная колонка для галочек
-    df.insert(0, " ", False)
-    # Проставляем галочки тем товарам, которые уже были выбраны ранее (в поиске или списке)
-    df.loc[df['uuid'].isin(st.session_state[selection_key]), " "] = True
+    # 1. Создаю временную колонку для галочки
+    df.insert(0, "Select", False)
+    df.loc[df['uuid'].isin(st.session_state[selection_key]), "Select"] = True
 
-    # Фильтрация по поиску
+    # 2. Фильтрация по поиску
     df_display = df.copy()
     if search:
         mask = df_display.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)
         df_display = df_display[mask]
 
-    # Используем data_editor, он умеет сохранять состояние ячеек
-    # Ключ НЕ должен содержать search, чтобы таблица не пересоздавалась с нуля
+    # 3. Настройка отображения (скрываем лишнее, называем красиво)
+    # Здесь я перечислила только те колонки, которые должны быть видны
+    column_settings = {
+        "Select": st.column_config.CheckboxColumn(label=" ", width="small"),
+        "name": st.column_config.TextColumn(label="Название"),
+        "article": st.column_config.TextColumn(label="Артикул"),
+        "barcode": st.column_config.TextColumn(label="Баркод"),
+        "quantity": st.column_config.NumberColumn(label="Кол-во"),
+        "box_num": st.column_config.TextColumn(label="Номер короба"),
+        "uuid": None,  # Скрываем
+        "type": None   # Скрываем
+    }
+
+    # 4. Отрисовка
     editor_key = f"editor_{key}_{st.session_state.reset_counter}"
     
     edited_df = st.data_editor(
@@ -140,37 +150,35 @@ def render_table(storage_type, key):
         key=editor_key,
         hide_index=True,
         use_container_width=True,
-        column_config={
-            " ": st.column_config.CheckboxColumn(width="small", help="Выбрать товар"),
-            "uuid": None  # Скрываем техническое поле
-        },
-        # Запрещаем редактировать всё, кроме колонки с галочкой
-        disabled=[col for col in df_display.columns if col != " "]
+        column_config=column_settings,
+        disabled=[col for col in df_display.columns if col != "Select"]
     )
 
-    # --- СИНХРОНИЗАЦИЯ С ПАМЯТЬЮ ---
-    # Обновляем нашу "корзину" на основе измененных галочек в таблице
+    # 5. Синхронизация выбора
+    # Сверяем изменения в редакторе с нашей "корзиной" в сессии
     for _, row in edited_df.iterrows():
-        if row[" "]:
+        if row["Select"]:
             st.session_state[selection_key].add(row["uuid"])
         else:
             st.session_state[selection_key].discard(row["uuid"])
 
-    # Итоговый список для кнопок
+    # Итоговый список для действий
     final_uuids = list(st.session_state[selection_key])
     count = len(final_uuids)
 
     if count > 0:
-        st.success(f"✅ Выбрано для отгрузки: {count}")
+        st.success(f"✅ Выбрано товаров: {count}")
         c1, c2 = st.columns(2)
         
-        # Данные для Excel (фильтруем оригинал, убирая временную колонку)
-        selected_df = df[df['uuid'].isin(final_uuids)].drop(columns=[" "])
+        selected_df = df[df['uuid'].isin(final_uuids)]
 
         # Кнопка Отгрузить
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            selected_df[['barcode', 'quantity', 'box_num']].to_excel(writer, index=False)
+            # Для Excel берем только нужные колонки
+            exp_df = selected_df[['barcode', 'quantity', 'box_num']].copy()
+            exp_df.columns = ["Баркод", "Кол-во", "Номер короба"]
+            exp_df.to_excel(writer, index=False)
         
         if c1.download_button(f"📦 Отгрузить ({count})", data=output.getvalue(), file_name=f"ship_{storage_type}.xlsx", key=f"dl_{key}"):
             with engine.connect() as conn:
@@ -288,6 +296,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
