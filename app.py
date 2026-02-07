@@ -107,28 +107,30 @@ search = st.text_input("🔍 Быстрый поиск (Баркод / Арти�
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📦 Архив", "📊 Хранение", "🧾 Итого"])
 
 def render_table(storage_type, key):
-    # Хранилище для накопленных UUID
+    # Хранилище для накопленных UUID выбранных товаров
     selection_key = f"selected_uuids_{key}"
     if selection_key not in st.session_state:
         st.session_state[selection_key] = set()
 
-    # Загружаем данные из БД
+    # Загрузила данные из базы данных
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
     
     if df.empty:
         st.info(f"Склад {storage_type} пуст")
         return
 
-    # Фильтрация по поиску
+    # Фильтрация данных по поиску
     df_display = df.copy()
     if search:
-        # Ищем по всем колонкам для удобства
+        # Ищу совпадения по всем колонкам
         mask = df_display.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)
         df_display = df_display[mask]
 
-    table_key = f"table_{key}_{st.session_state.reset_counter}"
+    # Генерирую уникальный ключ для таблицы, зависящий от поиска
+    # Это "сбрасывает" визуальные ошибки Streamlit при фильтрации
+    table_key = f"table_{key}_{st.session_state.reset_counter}_{search}"
 
-    # Рендерим таблицу без initial_selection, чтобы избежать TypeError
+    # Отрисовываю таблицу
     sel = st.dataframe(
         df_display,
         use_container_width=True,
@@ -138,37 +140,39 @@ def render_table(storage_type, key):
         key=table_key
     )
 
-    # --- ЛОГИКА СИНХРОНИЗАЦИИ (UUID-based) ---
-    # 1. Получаем то, что выбрано на экране сейчас
+    # --- ЛОГИКА СИНХРОНИЗАЦИИ ---
+    # Получаю индексы строк, выбранных на экране в данный момент
     new_selected_indices = sel.get("selection", {}).get("rows", [])
     
-    # 2. Определяем UUID строк, которые сейчас видны в таблице (результат поиска)
+    # Определяю UUID товаров, которые сейчас видны (результат поиска)
     visible_uuids = set(df_display['uuid'].tolist())
     
-    # 3. Определяем UUID тех строк, на которых пользователь поставил галочки
+    # Определяю UUID товаров, которые пользователь отметил галочкой
     currently_checked_uuids = set(df_display.iloc[new_selected_indices]['uuid'].tolist())
 
-    # 4. Обновляем сессию:
-    # Добавляем новые выбранные
+    # Обновляю состояние сессии:
+    # 1. Добавляю те UUID, на которые поставили галочки
     for u in currently_checked_uuids:
         st.session_state[selection_key].add(u)
     
-    # Убираем только те, что видны на экране, но с которых сняли галочку
-    # (Это сохранит выбор из других результатов поиска)
+    # 2. Убираю только те UUID, которые видны сейчас на экране, но с которых сняли галочку
+    # Это позволяет сохранять выбор, сделанный в предыдущих поисках
     for u in visible_uuids:
         if u not in currently_checked_uuids:
             st.session_state[selection_key].discard(u)
 
-    # Итоговый список выбранных UUID
-    final_uuids = list(st.session_state[selection_key])
-    count = len(final_uuids)
+    # Список всех выбранных UUID для выполнения действий
+    final_selected_uuids = list(st.session_state[selection_key])
+    count = len(final_selected_uuids)
 
     if count > 0:
-        st.write(f"✅ Всего выбрано (включая поиск): {count}")
+        # Вывела информацию о количестве товаров в "корзине"
+        st.success(f"✅ В корзине накоплено товаров: {count}")
+        
         c1, c2 = st.columns(2)
 
-        # Подготовка данных для Excel (берем из исходного df по накопленным UUID)
-        selected_df = df[df['uuid'].isin(final_uuids)]
+        # Подготовка данных для экспорта в Excel
+        selected_df = df[df['uuid'].isin(final_selected_uuids)]
         
         exp_df = selected_df[['barcode', 'quantity', 'box_num']].copy()
         exp_df.columns = ["Баркод", "Кол-во", "Номер короба"]
@@ -179,23 +183,32 @@ def render_table(storage_type, key):
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             exp_df.to_excel(writer, index=False, sheet_name='Отгрузка')
         
-        # Кнопка Отгрузить
-        if c1.download_button(f"📦 Отгрузить ({count})", data=output.getvalue(), file_name=f"shipment_{storage_type}.xlsx", key=f"dl_{key}"):
+        # Кнопка "Отгрузить"
+        if c1.download_button(
+            f"📦 Отгрузить выбранное ({count})", 
+            data=output.getvalue(), 
+            file_name=f"shipment_{storage_type}.xlsx", 
+            key=f"dl_btn_{key}"
+        ):
             with engine.connect() as conn:
-                for uid in final_uuids:
+                for uid in final_selected_uuids:
+                    # Переношу в архив и удаляю из остатков
                     conn.execute(text("INSERT INTO archive SELECT *, :d FROM stock WHERE uuid=:u"), {"d": datetime.now().strftime("%d.%m %H:%M"), "u": uid})
                     conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": uid})
                 conn.commit()
+            
+            # Очистила корзину и обновила экран
             st.session_state[selection_key] = set()
             reset_selection()
             st.rerun()
 
-        # Кнопка Удалить
-        if c2.button(f"🗑️ Удалить ({count})", key=f"del_btn_{key}"):
+        # Кнопка "Удалить"
+        if c2.button(f"🗑️ Удалить выбранное ({count})", key=f"del_btn_{key}"):
             with engine.connect() as conn:
-                for uid in final_uuids:
+                for uid in final_selected_uuids:
                     conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": uid})
                 conn.commit()
+            
             st.session_state[selection_key] = set()
             reset_selection()
             st.rerun()
@@ -296,6 +309,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
