@@ -62,7 +62,7 @@ if "reset_counter" not in st.session_state:
     st.session_state.reset_counter = 0
 
 if "selected_uuids" not in st.session_state:
-    st.session_state.selected_uuids = set() 
+    st.session_state.selected_uuids = set()
 
 def reset_selection():
     st.session_state.reset_counter += 1
@@ -274,6 +274,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
