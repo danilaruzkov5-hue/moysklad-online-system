@@ -110,21 +110,19 @@ search = st.text_input("🔍 Быстрый поиск (Баркод / Арти�
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📜 Архив", "💰 Хранение", "📊 Итого"])
 
 def render_table(storage_type, key):
-    # 1. Загружаем данные
+    # 1. Загружаем данные из базы
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
     display_df = df.copy()
 
-    # 2. Фильтрация по поиску
+    # 2. Фильтрация по поиску (используем глобальную переменную search)
     if search:
         display_df = display_df[display_df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
 
-    # 3. Рисуем таблицу
+    # 3. Генерируем ключ для таблицы
     table_key = f"table_{key}_{st.session_state.reset_counter}"
-    
-    # Предварительно вычисляем, какие строки должны быть выделены
-    # (Streamlit Dataframe пока не очень дружит с динамическим selection, 
-    # поэтому используем логику обработки после отрисовки)
-    
+
+    # 4. Отображаем таблицу
+    # ВАЖНО: Мы убрали проверку st.active_script_run_reason, которая вызывала ошибку
     sel = st.dataframe(
         display_df,
         use_container_width=True,
@@ -134,33 +132,33 @@ def render_table(storage_type, key):
         key=table_key
     )
 
-    # 4. Логика сохранения выбора (UUID)
+    # 5. ЛОГИКА СОХРАНЕНИЯ ВЫБОРА (чтобы галочки не слетали)
     selection = sel.get("selection", {})
     current_rows = selection.get("rows", [])
 
-    # Получаем список UUID, которые сейчас отображены
-    visible_uuids = display_df['uuid'].tolist()
-    # Получаем UUID тех строк, которые выбраны прямо сейчас на экране
-    currently_selected_on_screen = [display_df.iloc[r]['uuid'] for r in current_rows]
+    # Получаем UUID тех, кто виден сейчас на экране
+    visible_uuids = set(display_df['uuid'].tolist())
+    # Получаем UUID тех, кого пользователь только что отметил галочкой
+    currently_selected_on_screen = [display_df.iloc[r]['uuid'] for r in current_rows if r < len(display_df)]
 
-    # ОБНОВЛЯЕМ ПАМЯТЬ:
-    # Добавляем новые галочки
+    # Обновляем память в session_state
+    # Добавляем новые выбранные товары
     for u in currently_selected_on_screen:
         st.session_state.selected_uuids.add(u)
 
-    # Убираем только те, что видны, но галочка снята
+    # Убираем только те товары, которые ВИДНЫ сейчас, но галочка с них СНЯТА
+    # Это позволит сохранить галочки на тех товарах, которые скрыты поиском
     for u in visible_uuids:
         if u not in currently_selected_on_screen and u in st.session_state.selected_uuids:
             st.session_state.selected_uuids.remove(u)
 
-    # 5. Считаем итог для кнопок
+    # 6. Считаем общий итог на основе сохраненных UUID
     final_selected_df = df[df['uuid'].isin(st.session_state.selected_uuids)]
     total_count = len(final_selected_df)
-    
-  
 
-        if total_count > 0:
-            st.success(f"Выбрано товаров: {total_count}")
+    if total_count > 0:
+        st.info(f"✅ Выбрано всего: {total_count}")
+        # Тут далее твой код с кнопками c1, c2 (Отгрузить/Удалить)...
             c1, c2 = st.columns(2)
             
             # Подготовка Excel
@@ -274,6 +272,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
