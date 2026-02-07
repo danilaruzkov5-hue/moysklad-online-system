@@ -110,16 +110,16 @@ search = st.text_input("🔍 Быстрый поиск (Баркод / Арти�
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📜 Архив", "💰 Хранение", "📊 Итого"])
 
 def render_table(storage_type, key):
-    # 1. Загружаем данные
+    # 1. Загружаем данные из базы
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
     
     display_df = df.copy()
     if search:
-        # Фильтрация
+        # Фильтрация по поиску
         display_df = display_df[display_df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
 
     if not display_df.empty:
-        # 2. Стабильный ключ для таблицы
+        # 2. Стабильный ключ виджета
         table_key = f"table_{key}_{st.session_state.reset_counter}"
         
         # 3. Рисуем таблицу
@@ -132,38 +132,38 @@ def render_table(storage_type, key):
             key=table_key
         )
         
-        # 4. Логика сохранения выбора
+        # 4. Логика накопления выбора (UUID)
         selection = sel.get("selection", {})
         current_rows = selection.get("rows", [])
-
-        # Безопасно получаем UUID того, что выбрано прямо сейчас на экране
+        
+        # Находим UUID тех, кто реально выбран на экране прямо сейчас
         max_idx = len(display_df) - 1
         currently_selected_on_screen = [
             display_df.iloc[r]['uuid'] for r in current_rows if r <= max_idx
         ]
 
-        # Набор UUID, которые сейчас видны пользователю
+        # Набор UUID, которые сейчас видит пользователь на экране
         visible_uuids = set(display_df['uuid'].tolist())
 
-        # ОБНОВЛЯЕМ ПАМЯТЬ:
-        # Добавляем новые галочки в сессию
+        # Синхронизируем выбор:
+        # Добавляем в память новые галочки
         for u in currently_selected_on_screen:
             st.session_state.selected_uuids.add(u)
         
-        # Убираем только те, что видны, но галочка снята
+        # Убираем из памяти только те, что видны на экране, но без галочки
         for u in visible_uuids:
             if u not in currently_selected_on_screen and u in st.session_state.selected_uuids:
                 st.session_state.selected_uuids.remove(u)
 
-        # 5. Считаем общий итог для кнопок
+        # 5. Собираем финальный список всех выбранных (даже скрытых)
         final_selected_df = df[df['uuid'].isin(st.session_state.selected_uuids)]
-        total_count = len(final_selected_df)
+        total_selected_count = len(final_selected_df)
 
-        if total_count > 0:
-            st.info(f"✅ Выбрано всего: {total_count}")
+        if total_selected_count > 0:
+            st.info(f"✅ Выбрано товаров: {total_selected_count}")
             c1, c2 = st.columns(2)
             
-            # Твой код Excel...
+            # Подготовка Excel для отгрузки
             exp_df = final_selected_df[['barcode', 'quantity', 'box_num']].copy()
             exp_df.columns = ["Баркод", "Кол-во", "Номер короба"]
             exp_df["ФИО"] = ""
@@ -173,17 +173,22 @@ def render_table(storage_type, key):
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 exp_df.to_excel(writer, index=False, sheet_name='Отгрузка')
             
-            # Кнопки (используем total_count)
-            if c1.download_button(f"📦 Отгрузить ({total_count})", data=output.getvalue(), file_name=f"shipment_{storage_type}.xlsx", key=f"dl_{key}"):
+            # Кнопка отгрузки
+            if c1.download_button(f"📦 Отгрузить ({total_selected_count})", 
+                                  data=output.getvalue(), 
+                                  file_name=f"shipment_{storage_type}.xlsx", 
+                                  key=f"dl_{key}"):
                 with engine.connect() as conn:
                     for u in st.session_state.selected_uuids:
-                        conn.execute(text("INSERT INTO archive SELECT *, :d FROM stock WHERE uuid=:u"), {"d": datetime.now().strftime("%d.%m %H:%M"), "u": u})
+                        conn.execute(text("INSERT INTO archive SELECT *, id FROM stock WHERE uuid=:u"), 
+                                     {"u": u})
                         conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": u})
                     conn.commit()
                     reset_selection()
                     st.rerun()
 
-            if c2.button(f"🗑️ Удалить ({total_count})", key=f"del_btn_{key}"):
+            # Кнопка удаления
+            if c2.button(f"🗑️ Удалить ({total_selected_count})", key=f"del_btn_{key}"):
                 with engine.connect() as conn:
                     for u in st.session_state.selected_uuids:
                         conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": u})
@@ -269,6 +274,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
