@@ -132,19 +132,24 @@ def render_table(storage_type, key):
             key=table_key
         )
         
-        # Получаем данные о выборе
+        # Проверяем выбор
         selection = sel.get("selection", {})
         current_rows = selection.get("rows", [])
-        
-        if st.active_script_run_reason == "widget_triggered":
+
+        if selection:
             visible_uuids = display_df['uuid'].tolist()
-            currently_selected_visible_uuids = display_df.iloc[current_rows]['uuid'].tolist()
             
-           
+            # Ограничиваем индексы, чтобы не было IndexError
+            max_idx = len(display_df) - 1
+            valid_rows = [r for r in current_rows if r <= max_idx]
+            
+            currently_selected_visible_uuids = display_df.iloc[valid_rows]['uuid'].tolist()
+            
+            # Обновляем сессию (накопление)
             for u in currently_selected_visible_uuids:
                 st.session_state.selected_uuids.add(u)
             
-
+            # Снимаем галочки только для тех, кто виден на экране
             for u in visible_uuids:
                 if u not in currently_selected_visible_uuids and u in st.session_state.selected_uuids:
                     st.session_state.selected_uuids.remove(u)
@@ -265,6 +270,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
