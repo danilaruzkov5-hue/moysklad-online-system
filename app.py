@@ -107,17 +107,23 @@ search = st.text_input("🔍 Быстрый поиск (Баркод / Арти�
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📦 Архив", "📊 Хранение", "🧾 Итого"])
 
 def render_table(storage_type, key):
-    # Корзина для хранения UUID выбранных товаров
+    # Хранилище UUID в сессии (наша "корзина")
     selection_key = f"selected_uuids_{key}"
     if selection_key not in st.session_state:
         st.session_state[selection_key] = set()
 
-    # Загрузила данные
+    # Загрузила данные из базы
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
     
     if df.empty:
         st.info(f"Склад {storage_type} пуст")
         return
+
+    # --- ГЛАВНЫЙ СЕКРЕТ ---
+    # Добавляем временную колонку " " (пробел), чтобы она выглядела как стандартная колонка для галочек
+    df.insert(0, " ", False)
+    # Проставляем галочки тем товарам, которые уже были выбраны ранее (в поиске или списке)
+    df.loc[df['uuid'].isin(st.session_state[selection_key]), " "] = True
 
     # Фильтрация по поиску
     df_display = df.copy()
@@ -125,51 +131,42 @@ def render_table(storage_type, key):
         mask = df_display.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)
         df_display = df_display[mask]
 
-    # Использую динамический ключ, зависящий от поиска, чтобы сбросить старые индексы
-    table_key = f"table_{key}_{st.session_state.reset_counter}_{search}"
-
-    # Отрисовываю таблицу БЕЗ параметров selection/initial_selection (чтобы не было ошибок)
-    sel = st.dataframe(
+    # Используем data_editor, он умеет сохранять состояние ячеек
+    # Ключ НЕ должен содержать search, чтобы таблица не пересоздавалась с нуля
+    editor_key = f"editor_{key}_{st.session_state.reset_counter}"
+    
+    edited_df = st.data_editor(
         df_display,
-        use_container_width=True,
+        key=editor_key,
         hide_index=True,
-        on_select="rerun",
-        selection_mode="multi-row",
-        key=table_key
+        use_container_width=True,
+        column_config={
+            " ": st.column_config.CheckboxColumn(width="small", help="Выбрать товар"),
+            "uuid": None  # Скрываем техническое поле
+        },
+        # Запрещаем редактировать всё, кроме колонки с галочкой
+        disabled=[col for col in df_display.columns if col != " "]
     )
 
-    # --- ЛОГИКА "УМНОЙ" СИНХРОНИЗАЦИИ ---
-    # 1. Получаю индексы строк, которые ты нажал прямо сейчас на экране
-    new_rows = sel.get("selection", {}).get("rows", [])
-    
-    # 2. Перевожу эти индексы в реальные UUID товаров
-    currently_checked_uuids = set(df_display.iloc[new_rows]['uuid'].tolist())
-    
-    # 3. Список всех UUID, которые сейчас видны в таблице (результат поиска)
-    visible_uuids = set(df_display['uuid'].tolist())
+    # --- СИНХРОНИЗАЦИЯ С ПАМЯТЬЮ ---
+    # Обновляем нашу "корзину" на основе измененных галочек в таблице
+    for _, row in edited_df.iterrows():
+        if row[" "]:
+            st.session_state[selection_key].add(row["uuid"])
+        else:
+            st.session_state[selection_key].discard(row["uuid"])
 
-    # 4. Обновляю корзину:
-    # Добавляю то, что ты отметил
-    for u in currently_checked_uuids:
-        st.session_state[selection_key].add(u)
-    
-    # Убираю только то, что видно на экране, но с чего ты снял галочку
-    # Это ВАЖНО: товары из других поисков останутся в корзине!
-    for u in visible_uuids:
-        if u not in currently_checked_uuids:
-            st.session_state[selection_key].discard(u)
-
-    # Итоговый список накопленных товаров
+    # Итоговый список для кнопок
     final_uuids = list(st.session_state[selection_key])
     count = len(final_uuids)
 
     if count > 0:
-        # Показываю тебе, что выбор работает, даже если галочки скрылись при поиске
-        st.info(f"💡 В корзине для отгрузки накоплено: {count} тов.")
-        
+        st.success(f"✅ Выбрано для отгрузки: {count}")
         c1, c2 = st.columns(2)
-        selected_df = df[df['uuid'].isin(final_uuids)]
         
+        # Данные для Excel (фильтруем оригинал, убирая временную колонку)
+        selected_df = df[df['uuid'].isin(final_uuids)].drop(columns=[" "])
+
         # Кнопка Отгрузить
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -291,6 +288,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
