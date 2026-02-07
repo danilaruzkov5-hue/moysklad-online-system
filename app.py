@@ -110,62 +110,54 @@ search = st.text_input("🔍 Быстрый поиск (Баркод / Арти�
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📜 Архив", "💰 Хранение", "📊 Итого"])
 
 def render_table(storage_type, key):
-    # 1. Загрузка данных
+    # 1. Загружаем данные
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
-    
     display_df = df.copy()
+
+    # 2. Фильтрация по поиску
     if search:
-        # Надежная фильтрация
-        mask = display_df.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)
-        display_df = display_df[mask]
+        display_df = display_df[display_df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
 
-    if not display_df.empty:
-        # Ключ меняется при поиске — это убивает баг с "чужими" галочками
-        table_key = f"table_{key}_{st.session_state.reset_counter}_{search}"
-        
-        sel = st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="multi-row",
-            key=table_key
-        )
-        
-        # 2. Безопасное получение выбора
-        selection = sel.get("selection", {})
-        current_rows = selection.get("rows", [])
-        
-        currently_selected_uuids = []
-        
-        # САМАЯ ВАЖНАЯ ЧАСТЬ: Защита от IndexError
-        try:
-            if current_rows:
-                # Проверяем каждую строку отдельно
-                for r in current_rows:
-                    if r < len(display_df):
-                        currently_selected_uuids.append(display_df.iloc[r]['uuid'])
-        except Exception:
-            # Если что-то пошло не так (индексы поплыли), просто сбрасываем текущий цикл
-            pass
+    # 3. Рисуем таблицу
+    table_key = f"table_{key}_{st.session_state.reset_counter}"
+    
+    # Предварительно вычисляем, какие строки должны быть выделены
+    # (Streamlit Dataframe пока не очень дружит с динамическим selection, 
+    # поэтому используем логику обработки после отрисовки)
+    
+    sel = st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="multi-row",
+        key=table_key
+    )
 
-        # Набор UUID, которые сейчас на экране
-        visible_uuids = set(display_df['uuid'].tolist())
+    # 4. Логика сохранения выбора (UUID)
+    selection = sel.get("selection", {})
+    current_rows = selection.get("rows", [])
 
-        if "selected_uuids" not in st.session_state:
-            st.session_state.selected_uuids = set()
+    # Получаем список UUID, которые сейчас отображены
+    visible_uuids = display_df['uuid'].tolist()
+    # Получаем UUID тех строк, которые выбраны прямо сейчас на экране
+    currently_selected_on_screen = [display_df.iloc[r]['uuid'] for r in current_rows]
 
-        # Синхронизация
-        for u in currently_selected_uuids:
-            st.session_state.selected_uuids.add(u)
-        
-        for u in visible_uuids:
-            if u not in currently_selected_uuids and u in st.session_state.selected_uuids:
-                st.session_state.selected_uuids.remove(u)
+    # ОБНОВЛЯЕМ ПАМЯТЬ:
+    # Добавляем новые галочки
+    for u in currently_selected_on_screen:
+        st.session_state.selected_uuids.add(u)
 
-        # 3. Итог
-        final_selected_df = df[df['uuid'].isin(st.session_state.selected_uuids)]
-        total_count = len(final_selected_df)
+    # Убираем только те, что видны, но галочка снята
+    for u in visible_uuids:
+        if u not in currently_selected_on_screen and u in st.session_state.selected_uuids:
+            st.session_state.selected_uuids.remove(u)
+
+    # 5. Считаем итог для кнопок
+    final_selected_df = df[df['uuid'].isin(st.session_state.selected_uuids)]
+    total_count = len(final_selected_df)
+    
+  
 
         if total_count > 0:
             st.success(f"Выбрано товаров: {total_count}")
@@ -282,6 +274,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
