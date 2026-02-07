@@ -107,12 +107,12 @@ search = st.text_input("🔍 Быстрый поиск (Баркод / Арти�
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📦 Архив", "📊 Хранение", "🧾 Итого"])
 
 def render_table(storage_type, key):
-    # Ключ для хранения UUID выбранных товаров в сессии
+    # Корзина для хранения UUID выбранных товаров
     selection_key = f"selected_uuids_{key}"
     if selection_key not in st.session_state:
         st.session_state[selection_key] = set()
 
-    # Загрузила актуальные данные
+    # Загрузила данные
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
     
     if df.empty:
@@ -125,50 +125,49 @@ def render_table(storage_type, key):
         mask = df_display.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)
         df_display = df_display[mask]
 
-    # --- ЛОГИКА СОХРАНЕНИЯ ГАЛОЧЕК (КАК РАНЬШЕ) ---
-    # Пересчитываю, какие строки в текущем отображении должны быть отмечены
-    current_selection_indices = [
-        i for i, row in enumerate(df_display.itertuples()) 
-        if row.uuid in st.session_state[selection_key]
-    ]
-
-    # Использую динамический ключ, чтобы таблица не "залипала"
+    # Использую динамический ключ, зависящий от поиска, чтобы сбросить старые индексы
     table_key = f"table_{key}_{st.session_state.reset_counter}_{search}"
 
+    # Отрисовываю таблицу БЕЗ параметров selection/initial_selection (чтобы не было ошибок)
     sel = st.dataframe(
         df_display,
         use_container_width=True,
         hide_index=True,
         on_select="rerun",
         selection_mode="multi-row",
-        key=table_key,
-        # Передаю сохраненные позиции галочек
-        selection={"rows": current_selection_indices}
+        key=table_key
     )
 
-    # Синхронизация: записываю в память UUID тех, на ком стоят галочки
+    # --- ЛОГИКА "УМНОЙ" СИНХРОНИЗАЦИИ ---
+    # 1. Получаю индексы строк, которые ты нажал прямо сейчас на экране
     new_rows = sel.get("selection", {}).get("rows", [])
     
-    # UUID всех строк, которые сейчас на экране
-    visible_uuids = set(df_display['uuid'].tolist())
-    # UUID тех, кого пользователь выбрал на экране
+    # 2. Перевожу эти индексы в реальные UUID товаров
     currently_checked_uuids = set(df_display.iloc[new_rows]['uuid'].tolist())
+    
+    # 3. Список всех UUID, которые сейчас видны в таблице (результат поиска)
+    visible_uuids = set(df_display['uuid'].tolist())
 
-    # Обновляю глобальный список в сессии
+    # 4. Обновляю корзину:
+    # Добавляю то, что ты отметил
+    for u in currently_checked_uuids:
+        st.session_state[selection_key].add(u)
+    
+    # Убираю только то, что видно на экране, но с чего ты снял галочку
+    # Это ВАЖНО: товары из других поисков останутся в корзине!
     for u in visible_uuids:
-        if u in currently_checked_uuids:
-            st.session_state[selection_key].add(u)
-        else:
+        if u not in currently_checked_uuids:
             st.session_state[selection_key].discard(u)
 
-    # Итоговый список для кнопок
+    # Итоговый список накопленных товаров
     final_uuids = list(st.session_state[selection_key])
     count = len(final_uuids)
 
     if count > 0:
-        st.write(f"### Выбрано товаров: {count}")
+        # Показываю тебе, что выбор работает, даже если галочки скрылись при поиске
+        st.info(f"💡 В корзине для отгрузки накоплено: {count} тов.")
+        
         c1, c2 = st.columns(2)
-
         selected_df = df[df['uuid'].isin(final_uuids)]
         
         # Кнопка Отгрузить
@@ -292,6 +291,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
