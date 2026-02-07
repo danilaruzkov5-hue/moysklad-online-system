@@ -110,7 +110,7 @@ search = st.text_input("🔍 Быстрый поиск (Баркод / Арти�
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📜 Архив", "💰 Хранение", "📊 Итого"])
 
 def render_table(storage_type, key):
-    # Загружаем актуальные данные
+    # Загружаем актуальные данные из базы
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
     
     display_df = df.copy()
@@ -119,10 +119,10 @@ def render_table(storage_type, key):
         display_df = display_df[display_df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
 
     if not display_df.empty:
-        # Стабильный ключ, зависящий только от вкладки и сброса, но НЕ от поиска
+        # Стабильный ключ виджета
         table_key = f"table_{key}_{st.session_state.reset_counter}"
         
-# Рисуем таблицу
+        # Отображаем таблицу
         sel = st.dataframe(
             display_df,
             use_container_width=True,
@@ -132,36 +132,38 @@ def render_table(storage_type, key):
             key=table_key
         )
         
-        # Проверяем выбор
+        # Получаем текущие выбранные строки
         selection = sel.get("selection", {})
         current_rows = selection.get("rows", [])
+        
+        # Безопасно получаем UUID выбранных в данный момент видимых строк
+        max_idx = len(display_df) - 1
+        currently_selected_uuids = [
+            display_df.iloc[r]['uuid'] for r in current_rows if r <= max_idx
+        ]
 
-        if selection:
-            visible_uuids = display_df['uuid'].tolist()
+        # ЛОГИКА ОБНОВЛЕНИЯ:
+        # Мы меняем st.session_state.selected_uuids только для тех строк, которые СЕЙЧАС ВИДНЫ
+        visible_uuids = set(display_df['uuid'].tolist())
+        
+        # 1. Добавляем новые выбранные UUID в глобальное хранилище
+        for u in currently_selected_uuids:
+            st.session_state.selected_uuids.add(u)
             
-            # Ограничиваем индексы, чтобы не было IndexError
-            max_idx = len(display_df) - 1
-            valid_rows = [r for r in current_rows if r <= max_idx]
-            
-            currently_selected_visible_uuids = display_df.iloc[valid_rows]['uuid'].tolist()
-            
-            # Обновляем сессию (накопление)
-            for u in currently_selected_visible_uuids:
-                st.session_state.selected_uuids.add(u)
-            
-            # Снимаем галочки только для тех, кто виден на экране
-            for u in visible_uuids:
-                if u not in currently_selected_visible_uuids and u in st.session_state.selected_uuids:
-                    st.session_state.selected_uuids.remove(u)
+        # 2. Убираем из хранилища те, что видны на экране, но НЕ выбраны галочкой
+        for u in visible_uuids:
+            if u not in currently_selected_uuids and u in st.session_state.selected_uuids:
+                st.session_state.selected_uuids.remove(u)
 
-        # Собираем данные для кнопок из глобального списка UUID
+        # Собираем все выбранные товары (включая те, что скрыты поиском)
         final_selected_df = df[df['uuid'].isin(st.session_state.selected_uuids)]
         total_selected_count = len(final_selected_df)
 
         if total_selected_count > 0:
-            st.write(f"✅ Выбрано всего: {total_selected_count}")
+            st.info(f"📍 Выбрано товаров (включая скрытые поиском): {total_selected_count}")
             c1, c2 = st.columns(2)
             
+            # Подготовка Excel
             exp_df = final_selected_df[['barcode', 'quantity', 'box_num']].copy()
             exp_df.columns = ["Баркод", "Кол-во", "Номер короба"]
             exp_df["ФИО"] = ""
@@ -171,6 +173,7 @@ def render_table(storage_type, key):
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 exp_df.to_excel(writer, index=False, sheet_name='Отгрузка')
             
+            # Кнопка отгрузки
             if c1.download_button(f"📦 Отгрузить ({total_selected_count})", 
                                   data=output.getvalue(), 
                                   file_name=f"shipment_{storage_type}.xlsx", 
@@ -184,6 +187,7 @@ def render_table(storage_type, key):
                     reset_selection()
                     st.rerun()
 
+            # Кнопка удаления
             if c2.button(f"🗑️ Удалить ({total_selected_count})", key=f"del_btn_{key}"):
                 with engine.connect() as conn:
                     for u in st.session_state.selected_uuids:
@@ -270,6 +274,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
