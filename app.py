@@ -110,19 +110,17 @@ search = st.text_input("🔍 Быстрый поиск (Баркод / Арти�
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📜 Архив", "💰 Хранение", "📊 Итого"])
 
 def render_table(storage_type, key):
-    # 1. Загружаем данные из базы
+    # 1. Загружаем свежие данные
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
     display_df = df.copy()
 
-    # 2. Фильтрация по поиску (используем глобальную переменную search)
+    # 2. Фильтруем (поиск)
     if search:
         display_df = display_df[display_df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
 
-    # 3. Генерируем ключ для таблицы
+    # 3. Рисуем таблицу (БЕЗ условия на active_script_run_reason!)
     table_key = f"table_{key}_{st.session_state.reset_counter}"
-
-    # 4. Отображаем таблицу
-    # ВАЖНО: Мы убрали проверку st.active_script_run_reason, которая вызывала ошибку
+    
     sel = st.dataframe(
         display_df,
         use_container_width=True,
@@ -132,25 +130,26 @@ def render_table(storage_type, key):
         key=table_key
     )
 
-    # 5. ЛОГИКА СОХРАНЕНИЯ ВЫБОРА (чтобы галочки не слетали)
+    # 4. Обработка выбора по UUID
     selection = sel.get("selection", {})
     current_rows = selection.get("rows", [])
-
-    # Получаем UUID тех, кто виден сейчас на экране
+    
+    # Список UUID, которые пользователь видит прямо сейчас
     visible_uuids = set(display_df['uuid'].tolist())
-    # Получаем UUID тех, кого пользователь только что отметил галочкой
+    # UUID тех строк, где стоит галочка
     currently_selected_on_screen = [display_df.iloc[r]['uuid'] for r in current_rows if r < len(display_df)]
 
-    # Обновляем память в session_state
-    # Добавляем новые выбранные товары
+    # Запоминаем новые галочки
     for u in currently_selected_on_screen:
         st.session_state.selected_uuids.add(u)
 
-    # Убираем только те товары, которые ВИДНЫ сейчас, но галочка с них СНЯТА
-    # Это позволит сохранить галочки на тех товарах, которые скрыты поиском
+    # УДАЛЯЕМ только если товар ВИДЕН, но галочка СНЯТА
+    # Если товара нет в поиске, он остается в памяти (selected_uuids)
     for u in visible_uuids:
         if u not in currently_selected_on_screen and u in st.session_state.selected_uuids:
             st.session_state.selected_uuids.remove(u)
+
+    # Далее твой код с кнопками...
 
     # 6. Считаем общий итог на основе сохраненных UUID
     final_selected_df = df[df['uuid'].isin(st.session_state.selected_uuids)]
@@ -272,6 +271,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
