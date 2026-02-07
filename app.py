@@ -137,7 +137,7 @@ with t3:
         idx_a = sel_a.get("selection", {}).get("rows", [])
         if idx_a:
             ca1, ca2 = st.columns(2)
-            if ca1.button(f"🔙 Вернуть на баланс ({len(idx_a)})", key=f"res_btn_{arch_type}"):
+            if ca1.button(f"🔙 Вернуть на обратно ({len(idx_a)})", key=f"res_btn_{arch_type}"):
                 with engine.connect() as conn:
                     for i in idx_a:
                         r = df_arch.iloc[i]
@@ -169,4 +169,5 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
