@@ -36,11 +36,12 @@ def load_api_data():
         if res.status_code == 200:
             return res.json().get('rows', [])
         return []
-    except: return []
+    except:
+        return []
 
-# Проверка связи для визуального подтверждения заказчику
+# Проверка связи
 ms_rows = load_api_data()
-api_status = "🟢 Связь с МойСклад: Установлена" if ms_rows else "🔴 Связь с МойСклад: Проверьте настройки"
+api_status = "🟢 Связь с МойСклад: Установлена" if ms_rows else "🔴 Связь с МойСклад: Ошибка подключения"
 
 st.title("📦 Единая база склада (ИП / ООО)")
 st.caption(api_status)
@@ -48,7 +49,7 @@ st.caption(api_status)
 # --- ПРИЕМКА ТОВАРА ---
 with st.sidebar:
     st.header("📥 Приемка")
-    uploaded_file = st.file_uploader("Загрузи Excel (Баркод, Кол-во, Номер короба)", type=["xlsx"])
+    uploaded_file = st.file_uploader("Загрузи Excel (Баркод, Кол-во, Короб)", type=["xlsx"])
     target_type = st.radio("Тип поставки:", ["ИП", "ООО"])
 
     if uploaded_file and st.button("➕ Добавить на баланс"):
@@ -65,7 +66,7 @@ with st.sidebar:
                                 {"u":str(uid), "n":str(name), "a":str(art), "b":str(row["Баркод"]), 
                                  "q":float(row["Кол-во"]), "bn":str(row["Номер короба"]), "t":str(target_type)})
                 conn.commit()
-            st.success("Данные успешно сохранены в облако!")
+            st.success("Данные успешно сохранены!")
             st.rerun()
         except Exception as e:
             st.error(f"Ошибка файла: {e}")
@@ -84,52 +85,43 @@ def render_table(storage_type, key):
         
         if idx:
             c1, c2 = st.columns(2)
-            # Изменение по просьбе заказчика: Кнопка отгрузки теперь выдает файл
-            if c1.button(f"🚀 Завершить и отгрузить выбранное ({len(idx)})", key=f"ship_{key}"):
-                selected_df = df.iloc[idx].copy()
-                
-                # Подготовка Excel листа отгрузки
-                export_df = selected_df[['barcode', 'quantity', 'box_num']].copy()
-                export_df.columns = ["Баркод", "Кол-во", "Номер короба"]
-                export_df["Дата отгрузки"] = datetime.now().strftime("%d.%m.%Y %H:%M")
-                export_df["ФИО сотрудника"] = ""
-                
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    export_df.to_excel(writer, index=False, sheet_name='Отгрузка')
-                
-                # Сохраняем файл в сессию, чтобы он не пропал при rerun
-                st.session_state[f"file_{key}"] = output.getvalue()
-                
+            if c1.button(f"🚀 Отгрузить в архив ({len(idx)})", key=f"ship_{key}"):
                 with engine.connect() as conn:
                     for i in idx:
                         r = df.iloc[i]
-                        conn.execute(text("INSERT INTO archive SELECT *, :d FROM stock WHERE uuid=:u"), {"d": datetime.now().strftime("%d.%m %H:%M"), "u": r['uuid']})
-                        conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": r['uuid']})
+                        conn.execute(text("INSERT INTO archive SELECT *, :d FROM stock WHERE uuid=:u"), 
+                                    {"d": datetime.now().strftime("%d.%m %H:%M"), "u": r['uuid']})
+                        conn.execute(text("DELETE FROM stock WHERE uuid=:u"), 
+                                    {"u": r['uuid']})
                     conn.commit()
-                st.success("Товары перенесены в архив!")
                 st.rerun()
             
             if c2.button(f"🗑️ Удалить безвозвратно ({len(idx)})", key=f"del_{key}"):
                 with engine.connect() as conn:
                     for i in idx:
-                        conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": df.iloc[i]['uuid']})
+                        conn.execute(text("DELETE FROM stock WHERE uuid=:u"), 
+                                    {"u": df.iloc[i]['uuid']})
                     conn.commit()
                 st.rerun()
-    else: st.info(f"На складе {storage_type} пока ничего нет")
+    else:
+        st.info(f"На складе {storage_type} пока ничего нет")
 
-with t1: render_table("ИП", "ip")
-with t2: render_table("ООО", "ooo")
+with t1:
+    render_table("ИП", "ip")
+
+with t2:
+    render_table("ООО", "ooo")
 
 with t3:
     # Разделение архива по требованию заказчика
-    arch_type = st.radio("Показать архив:", ["ИП", "ООО"], horizontal=True)
-    arch_df = pd.read_sql(text(f"SELECT * FROM archive WHERE type='{arch_type}'"), engine)
+    arch_type = st.radio("Показать архив:", ["ИП", "ООО"], horizontal=True, key="arch_selector")
+    df_arch = pd.read_sql(text(f"SELECT * FROM archive WHERE type='{arch_type}'"), engine)
     
-    if not arch_df.empty:
-        sel_a = st.dataframe(arch_df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key=f"arch_t_{arch_type}")
+    if not df_arch.empty:
+        sel_a = st.dataframe(df_arch, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key=f"arch_t_{arch_type}")
         
-        export_df = arch_df[['barcode', 'quantity', 'box_num', 'ship_date']].copy()
+        # Подготовка Excel
+        export_df = df_arch[['barcode', 'quantity', 'box_num', 'ship_date']].copy()
         export_df.columns = ["Баркод", "Кол-во", "Номер короба", "Дата приемки"]
         export_df["ФИО сотрудника"] = ""
         
@@ -137,7 +129,7 @@ with t3:
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             export_df.to_excel(writer, index=False, sheet_name='Архив')
         
-        st.download_button(f"📥 Скачать весь архив {arch_type}", output.getvalue(), f"archive_{arch_type}.xlsx", key=f"dl_{arch_type}")
+        st.download_button(f"📥 Скачать архив {arch_type}", output.getvalue(), f"archive_{arch_type}.xlsx")
 
         idx_a = sel_a.get("selection", {}).get("rows", [])
         if idx_a:
@@ -145,7 +137,7 @@ with t3:
             if ca1.button(f"🔙 Вернуть на баланс ({len(idx_a)})", key=f"res_{arch_type}"):
                 with engine.connect() as conn:
                     for i in idx_a:
-                        r = arch_df.iloc[i]
+                        r = df_arch.iloc[i]
                         conn.execute(text("INSERT INTO stock SELECT uuid, name, article, barcode, quantity, box_num, type FROM archive WHERE uuid=:u"), {"u": r['uuid']})
                         conn.execute(text("DELETE FROM archive WHERE uuid=:u"), {"u": r['uuid']})
                     conn.commit()
@@ -153,10 +145,11 @@ with t3:
             if ca2.button(f"🔥 Удалить навсегда ({len(idx_a)})", key=f"clear_{arch_type}"):
                 with engine.connect() as conn:
                     for i in idx_a:
-                        conn.execute(text("DELETE FROM archive WHERE uuid=:u"), {"u": arch_df.iloc[i]['uuid']})
+                        conn.execute(text("DELETE FROM archive WHERE uuid=:u"), {"u": df_arch.iloc[i]['uuid']})
                     conn.commit()
                 st.rerun()
-    else: st.info(f"Архив {arch_type} пуст")
+    else:
+        st.info(f"Архив {arch_type} пуст")
 
 with t4:
     df_all = pd.read_sql(text("SELECT * FROM stock"), engine)
@@ -165,9 +158,11 @@ with t4:
     st.metric("Всего коробов на складе", boxes)
     st.metric("Паллет к оплате", pallets)
     st.write(f"Стоимость/сутки: {pallets * 50} ₽")
-    with t5:
+
+with t5:
     df_all = pd.read_sql(text("SELECT * FROM stock"), engine)
     if not df_all.empty:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
