@@ -110,53 +110,59 @@ search = st.text_input("🔍 Быстрый поиск (Баркод / Арти�
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📜 Архив", "💰 Хранение", "📊 Итого"])
 
 def render_table(storage_type, key):
-    # Загружаем данные
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
     
-    # Фильтруем для отображения, если есть поиск
     display_df = df.copy()
     if search:
         display_df = display_df[display_df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
 
     if not display_df.empty:
-        # Определяем, какие строки из текущего display_df уже были выбраны ранее
-        # Находим индексы строк, чьи uuid есть в st.session_state.selected_uuids
-        pre_selected_rows = display_df.index[display_df['uuid'].isin(st.session_state.selected_uuids)].tolist()
-
+        # Стабильный ключ, чтобы выбор не "прыгал"
         table_key = f"table_{key}_{st.session_state.reset_counter}"
         
-        # Настройка выбора (теперь мы используем selection_state для управления)
+        # Находим индексы строк, которые уже были выбраны ранее, чтобы показать их
+        pre_selected_rows = display_df.index[display_df['uuid'].isin(st.session_state.selected_uuids)].tolist()
+
+        # Рисуем таблицу БЕЗ прямого selection_state (он часто капризничает)
+        # Мы будем просто обновлять наш список UUID при каждом взаимодействии
         sel = st.dataframe(
             display_df,
             use_container_width=True,
             hide_index=True,
             on_select="rerun",
             selection_mode="multi-row",
-            key=table_key,
-    
-            selection_state={"rows": pre_selected_rows} 
+            key=table_key
         )
         
-        # Обновляем состояние выбранных UUID на основе текущего клика
+        # Получаем то, что выбрано в данный момент в интерфейсе
         current_rows = sel.get("selection", {}).get("rows", [])
-        current_uuids = display_df.iloc[current_rows]['uuid'].tolist()
         
-        # Логика "накопления":
+        # Если пользователь что-то кликнул, обновляем наш глобальный список
+        # Важно: мы работаем через UUID, чтобы сохранять выбор при поиске
         
-        displayed_uuids = display_df['uuid'].tolist()
-        for u in displayed_uuids:
-            if u in st.session_state.selected_uuids and u not in current_uuids:
-                st.session_state.selected_uuids.remove(u)
+        # 1. Получаем UUID тех строк, что сейчас отображены
+        visible_uuids = display_df['uuid'].tolist()
         
-        for u in current_uuids:
+        # 2. Определяем, какие из видимых сейчас выбраны галочкой
+        currently_selected_visible_uuids = display_df.iloc[current_rows]['uuid'].tolist()
+        
+        # 3. Обновляем сессию: 
+        # Добавляем новые галочки
+        for u in currently_selected_visible_uuids:
             st.session_state.selected_uuids.add(u)
+        
+        # Убираем те, с которых галочку сняли (только для видимых строк)
+        for u in visible_uuids:
+            if u not in currently_selected_visible_uuids and u in st.session_state.selected_uuids:
+                st.session_state.selected_uuids.remove(u)
 
-    
+        # Считаем общее кол-во (включая скрытые поиском)
         final_selected_df = df[df['uuid'].isin(st.session_state.selected_uuids)]
-        count = len(final_selected_df)
+        total_count = len(final_selected_df)
 
-        if count > 0:
+        if total_count > 0:
             c1, c2 = st.columns(2)
+            # ... далее твой код кнопок Отгрузить/Удалить без изменений ...
             
             # Подготовка Excel
             exp_df = final_selected_df[['barcode', 'quantity', 'box_num']].copy()
@@ -263,6 +269,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
