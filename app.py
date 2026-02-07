@@ -8,8 +8,8 @@ from sqlalchemy import create_engine, text
 
 # --- НАСТРОЙКИ ---
 TOKEN = st.secrets["MS_TOKEN"]
-ORG_ID = "da0e7ea9-d216-11ec-0a80-08be00007acc" 
-STORE_ID = "da0f3443-d216-11ec-0a80-08be00007ace"
+ORG_ID =  st.secrets["MS_ORG_ID"]
+STORE_ID = st.secrets["MS_STORE_ID"]
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
 # --- БАЗА ДАННЫХ ---
@@ -169,6 +169,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
