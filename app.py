@@ -107,26 +107,29 @@ search = st.text_input("🔍 Быстрый поиск (Баркод / Арти�
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📦 Архив", "📊 Хранение", "🧾 Итого"])
 
 def render_table(storage_type, key):
-    # Хранилище для накопленных UUID
+    # Корзина в памяти
     selection_key = f"selected_uuids_{key}"
     if selection_key not in st.session_state:
         st.session_state[selection_key] = set()
 
-    # Загружаем данные из БД
+    # Загрузила данные
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
     
     if df.empty:
         st.info(f"Склад {storage_type} пуст")
         return
 
-    # Фильтрация по поиску
+    # --- ВОТ ТУТ РЕШЕНИЕ ПРОБЛЕМЫ ---
+    # Делаем uuid индексом. Тогда Streamlit будет привязывать выбор к нему, 
+    # а не к порядковому номеру строки на экране.
+    df = df.set_index('uuid', drop=False)
+
     df_display = df.copy()
     if search:
         mask = df_display.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)
         df_display = df_display[mask]
 
-    # --- ВОЗВРАЩАЕМ СТАРЫЙ ВИД ---
-    # Ключ теперь стабильный, чтобы галочки не слетали мгновенно
+    # Ключ стабильный! Это важно, чтобы выбор не сбрасывался при вводе каждой буквы
     table_key = f"table_{key}_{st.session_state.reset_counter}"
 
     sel = st.dataframe(
@@ -138,40 +141,38 @@ def render_table(storage_type, key):
         key=table_key
     )
 
-    # Логика синхронизации (UUID-based)
+    # Получаем выбранные UUID напрямую из индексов
+    # sel['selection']['rows'] в новых версиях возвращает индексы строк, 
+    # поэтому мы берем их из отфильтрованного df_display
     new_rows = sel.get("selection", {}).get("rows", [])
     
-    # UUID того, что сейчас на экране
-    visible_uuids = set(df_display['uuid'].tolist())
-    # UUID тех, кого ты выбрал на экране
-    currently_checked_uuids = set(df_display.iloc[new_rows]['uuid'].tolist())
+    # UUID тех строк, которые сейчас физически видны на экране
+    visible_uuids = set(df_display.index.tolist())
+    # UUID тех строк, на которых стоят галочки
+    currently_checked_uuids = set(df_display.iloc[new_rows].index.tolist())
 
-    # Обновляем память сессии
-    if search:
-        # Если ты в поиске: добавляем новые, но не удаляем те, что скрыты
-        for u in currently_checked_uuids:
-            st.session_state[selection_key].add(u)
-        # Удаляем только если ты СНЯЛ галочку с того, что видишь
-        for u in visible_uuids:
-            if u not in currently_checked_uuids:
-                st.session_state[selection_key].discard(u)
-    else:
-        # Если ты в общем списке: корзина полностью равна выбору на экране
-        st.session_state[selection_key] = currently_checked_uuids
+    # Синхронизация:
+    # 1. Добавляем в общую корзину то, что выбрали сейчас
+    for u in currently_checked_uuids:
+        st.session_state[selection_key].add(u)
+    
+    # 2. Убираем из корзины только если галочку сняли вручную с видимого товара
+    for u in visible_uuids:
+        if u not in currently_checked_uuids:
+            st.session_state[selection_key].discard(u)
 
-    # Итоговый список для действий
+    # Итоговый список
     final_uuids = list(st.session_state[selection_key])
     count = len(final_uuids)
 
     if count > 0:
-        # Показываем плашку только если реально что-то выбрано (включая скрытое поиском)
-        if search and count > len(currently_checked_uuids):
-             st.info(f"📦 Всего выбрано (с учетом поиска): {count}")
+        # Небольшая подсказка, чтобы ты видел, что выбор сохранен
+        st.caption(f"📍 В памяти сохранено товаров: {count}")
         
         c1, c2 = st.columns(2)
-        selected_df = df[df['uuid'].isin(final_uuids)]
-        
-        # Кнопки Отгрузить/Удалить (твой оригинальный код)
+        selected_df = df.loc[list(st.session_state[selection_key])]
+
+        # Кнопки отгрузки (без изменений)
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             selected_df[['barcode', 'quantity', 'box_num']].to_excel(writer, index=False)
@@ -291,6 +292,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
