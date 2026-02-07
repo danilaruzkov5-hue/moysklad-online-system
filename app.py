@@ -17,7 +17,6 @@ HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json
 DB_URL = st.secrets.get("DB_URL", "sqlite:///warehouse.db")
 engine = create_engine(DB_URL)
 
-# --- ВСТАВЛЯЙ ПРЯМО СЮДА ---
 def check_and_log_daily():
     now = datetime.now()
     # Если время 23:00 или больше
@@ -28,7 +27,7 @@ def check_and_log_daily():
             res = conn.execute(text("SELECT 1 FROM daily_storage_logs WHERE log_date = :d"), {"d": today_str}).fetchone()
             
             if not res:
-                # Если нет — считаем и записываем
+                
                 df = pd.read_sql(text("SELECT * FROM stock"), engine)
                 b_ip = len(df[df['type'] == 'ИП'])
                 b_ooo = len(df[df['type'] == '000'])
@@ -45,7 +44,7 @@ def check_and_log_daily():
                      "tb": b_ip+b_ooo, "tp": p_ip+p_ooo, "tc": (p_ip+p_ooo)*50})
                 conn.commit()
 
-# Обязательно запускаем эту функцию!
+
 check_and_log_daily()
 # ---------------------------
 
@@ -61,8 +60,9 @@ init_db()
 
 if "reset_counter" not in st.session_state:
     st.session_state.reset_counter = 0
-    if "selected_uuids" not in st.session_state:
-    st.session_state.selected_uuids = set()
+
+if "selected_uuids" not in st.session_state:
+    st.session_state.selected_uuids = set() 
 
 def reset_selection():
     st.session_state.reset_counter += 1
@@ -133,7 +133,7 @@ def render_table(storage_type, key):
             on_select="rerun",
             selection_mode="multi-row",
             key=table_key,
-            # Важно: показываем уже выбранные галочки
+    
             selection_state={"rows": pre_selected_rows} 
         )
         
@@ -142,23 +142,23 @@ def render_table(storage_type, key):
         current_uuids = display_df.iloc[current_rows]['uuid'].tolist()
         
         # Логика "накопления":
-        # 1. Сначала удаляем из глобального списка те UUID, которые сейчас отображены, но не выбраны
+        
         displayed_uuids = display_df['uuid'].tolist()
         for u in displayed_uuids:
             if u in st.session_state.selected_uuids and u not in current_uuids:
                 st.session_state.selected_uuids.remove(u)
-        # 2. Добавляем те, что выбраны сейчас
+        
         for u in current_uuids:
             st.session_state.selected_uuids.add(u)
 
-        # Для кнопок используем ВСЕ накопленные UUID, а не только видимые
+    
         final_selected_df = df[df['uuid'].isin(st.session_state.selected_uuids)]
         count = len(final_selected_df)
 
         if count > 0:
             c1, c2 = st.columns(2)
             
-            # Подготовка Excel (берем данные из накопленного списка)
+            # Подготовка Excel
             exp_df = final_selected_df[['barcode', 'quantity', 'box_num']].copy()
             exp_df.columns = ["Баркод", "Кол-во", "Номер короба"]
             exp_df["ФИО"] = ""
@@ -263,6 +263,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
