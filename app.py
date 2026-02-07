@@ -195,28 +195,30 @@ with t4:
     # Считаем то, что лежит в stock прямо сейчас
     df_now = pd.read_sql(text("SELECT * FROM stock"), engine)
 
-if not df_now.empty:
+    if not df_now.empty:
         b_ip = len(df_now[df_now['type'] == 'ИП'])
         b_ooo = len(df_now[df_now['type'] == 'ООО'])
+        
         p_ip = math.ceil(b_ip / 16)
         p_ooo = math.ceil(b_ooo / 16)
 
-        # Показываем раздельные цифры
-        col1, col2 = st.columns(2)
-        
-        with col1:
+        # Создаем две колонки для раздельного отображения
+        col_ip, col_ooo = st.columns(2)
+
+        with col_ip:
             st.markdown("### 🏠 ИП")
-            st.metric("Коробов", b_ip)
-            st.metric("Паллет", p_ip)
-            st.metric("К начислению", f"{p_ip * 50} ₽")
-            
-        with col2:
+            st.metric("Коробов (ИП)", b_ip)
+            st.metric("Паллет (ИП)", p_ip)
+            st.metric("К начислению (ИП)", f"{p_ip * 50} ₽")
+
+        with col_ooo:
             st.markdown("### 🏢 ООО")
-            st.metric("Коробов", b_ooo)
-            st.metric("Паллет", p_ooo)
-            st.metric("К начислению", f"{p_ooo * 50} ₽")
+            st.metric("Коробов (ООО)", b_ooo)
+            st.metric("Паллет (ООО)", p_ooo)
+            st.metric("К начислению (ООО)", f"{p_ooo * 50} ₽")
 
         st.divider()
+        # Общий итог внизу
         st.metric("ИТОГО к начислению (Общее)", f"{(p_ip + p_ooo) * 50} ₽")
     else:
         st.write("Склад пуст")
@@ -225,7 +227,7 @@ if not df_now.empty:
 
     st.subheader("📜 История начислений (архив 23:00)")
     try:
-        history_df = pd.read_sql("SELECT * FROM daily_storage_logs ORDER BY log_date DESC", engine)
+        history_df = pd.read_sql(text("SELECT * FROM daily_storage_logs ORDER BY log_date DESC"), engine)
         if not history_df.empty:
             history_df.columns = ["Дата", "Кор. ИП", "Пал. ИП", "₽ ИП", "Кор. ООО", "Пал. ООО", "₽ ООО", "Всего кор.", "Всего пал.", "Итого ₽"]
             st.dataframe(history_df, use_container_width=True, hide_index=True)
@@ -240,6 +242,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
