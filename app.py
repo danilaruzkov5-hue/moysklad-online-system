@@ -109,14 +109,27 @@ t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📜 Архив", "�
 
 def render_table(storage_type, key):
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
-    if search:
-        df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
     
+    if search:
+        # Фильтрация
+        df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
+
     if not df.empty:
-        table_key = f"table_{key}_{st.session_state.reset_counter}"
-        sel = st.dataframe(df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key=table_key)
-        idx = sel.get("selection", {}).get("rows", [])
+        # Добавляем search в key. Теперь при смене поиска таблица считается "новой",
+        # и старые индексы не будут накладываться на новые данные.
+        table_key = f"table_{key}_{st.session_state.reset_counter}_{search}"
         
+        sel = st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="multi-row",
+            key=table_key
+        )
+        
+        idx = sel.get("selection", {}).get("rows", [])
+
         if idx:
             c1, c2 = st.columns(2)
             
@@ -131,24 +144,26 @@ def render_table(storage_type, key):
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 exp_df.to_excel(writer, index=False, sheet_name='Отгрузка')
             
-            if c1.download_button(f"🚀 Отгрузить ({len(idx)})", data=output.getvalue(), file_name=f"shipment_{storage_type}.xlsx", key=f"dl_{key}"):
+            if c1.download_button(f"📦 Отгрузить ({len(idx)})", data=output.getvalue(), file_name=f"shipment_{storage_type}.xlsx", key=f"dl_{key}"):
                 with engine.connect() as conn:
                     for i in idx:
                         u = df.iloc[i]['uuid']
                         conn.execute(text("INSERT INTO archive SELECT *, :d FROM stock WHERE uuid=:u"), {"d": datetime.now().strftime("%d.%m %H:%M"), "u": u})
                         conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": u})
                     conn.commit()
-                reset_selection()
-                st.rerun()
+                    reset_selection()
+                    st.rerun()
 
             if c2.button(f"🗑️ Удалить ({len(idx)})", key=f"del_btn_{key}"):
                 with engine.connect() as conn:
                     for i in idx:
-                        conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": df.iloc[i]['uuid']})
+                        u = df.iloc[i]['uuid']
+                        conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": u})
                     conn.commit()
-                reset_selection()
-                st.rerun()
-    else: st.info(f"Склад {storage_type} пуст")
+                    reset_selection()
+                    st.rerun()
+    else:
+        st.info(f"Склад {storage_type} пуст")
 
 with t1: render_table("ИП", "ip")
 with t2: render_table("ООО", "ooo")
@@ -226,6 +241,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
