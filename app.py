@@ -123,7 +123,6 @@ def render_table(storage_type, key):
     if selection_key not in st.session_state:
         st.session_state[selection_key] = set()
 
-    # Загружаем данные и ставим индекс по uuid
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
     if df.empty:
         st.info(f"Склад {storage_type} пуст")
@@ -132,40 +131,35 @@ def render_table(storage_type, key):
     df = df.set_index('uuid', drop=False)
     df_display = df.copy()
 
-    # Фильтруем (поиск у тебя глобальный)
     if search:
         mask = df_display.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)
         df_display = df_display[mask]
 
-    # Находим позиции уже выбранных товаров в текущем отображении
-    current_rows_to_check = [
-        i for i, idx in enumerate(df_display.index) 
-        if idx in st.session_state[selection_key]
-    ]
+    # Считаем индексы для галочек
+    current_rows = [i for i, idx in enumerate(df_display.index) if idx in st.session_state[selection_key]]
 
-    # Отрисовка таблицы
+    # Таблица (теперь версия будет правильная!)
     sel = st.dataframe(
         df_display,
         use_container_width=True,
         hide_index=True,
         on_select="rerun",
         selection_mode="multi-row",
-        selection={"rows": current_rows_to_check},
+        selection={"rows": current_rows},
         key=f"table_{key}_{st.session_state.reset_counter}"
     )
 
-    # ОБРАБОТКА ВЫБОРА (Внимательно с отступами тут!)
-    new_rows = sel.get("selection", {}).get("rows", [])
-    
-    # Синхронизация: работаем только с тем, что видим на экране
-    visible_uuids = set(df_display.index)
-    currently_checked_uuids = set(df_display.iloc[new_rows].index) if new_rows else set()
+    # Синхронизация выбора
+    if sel and "selection" in sel:
+        new_rows = sel["selection"]["rows"]
+        visible_uuids = set(df_display.index)
+        currently_checked = set(df_display.iloc[new_rows].index) if new_rows else set()
 
-    for u in visible_uuids:
-        if u in currently_checked_uuids:
-            st.session_state[selection_key].add(u)
-        else:
-            st.session_state[selection_key].discard(u)
+        for u in visible_uuids:
+            if u in currently_checked:
+                st.session_state[selection_key].add(u)
+            else:
+                st.session_state[selection_key].discard(u)
 
     # Твой код кнопок «Отгрузить» и «Удалить» дальше...
 
@@ -300,6 +294,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
