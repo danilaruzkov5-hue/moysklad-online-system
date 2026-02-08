@@ -12,6 +12,9 @@ ORG_ID = st.secrets["MS_ORG_ID"]
 STORE_ID = st.secrets["MS_STORE_ID"]
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
+for key in ["ip", "ooo", "arch"]:
+    if f"selected_uuids_{key}" not in st.session_state:
+        st.session_state[f"selected_uuids_{key}"] = set()
 # --- БАЗА ДАННЫХ ---
 DB_URL = st.secrets.get("DB_URL", "sqlite:///warehouse.db")
 engine = create_engine(DB_URL)
@@ -57,6 +60,15 @@ def init_db():
         conn.commit()
 
 init_db()
+# Инициализация корзин для выбора, если их еще нет
+if "selected_uuids_ip" not in st.session_state:
+    st.session_state["selected_uuids_ip"] = set()
+
+if "selected_uuids_ooo" not in st.session_state:
+    st.session_state["selected_uuids_ooo"] = set()
+
+if "selected_uuids_arch" not in st.session_state:
+    st.session_state["selected_uuids_arch"] = set()
 
 if "reset_counter" not in st.session_state:
     st.session_state.reset_counter = 0
@@ -107,59 +119,52 @@ search = st.text_input("🔍 Быстрый поиск (Баркод / Арти�
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📦 Архив", "📊 Хранение", "🧾 Итого"])
 
 def render_table(storage_type, key):
-    # Корзина в памяти
     selection_key = f"selected_uuids_{key}"
-    if selection_key not in st.session_state:
-        st.session_state[selection_key] = set()
-
-    # Загрузила данные
-    df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
     
+    # Загружаем данные и ставим индекс по uuid
+    df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
     if df.empty:
         st.info(f"Склад {storage_type} пуст")
         return
-
-    # --- ВОТ ТУТ РЕШЕНИЕ ПРОБЛЕМЫ ---
-    # Делаем uuid индексом. Тогда Streamlit будет привязывать выбор к нему, 
-    # а не к порядковому номеру строки на экране.
+    
     df = df.set_index('uuid', drop=False)
-
     df_display = df.copy()
+
+    # Фильтруем (поиск у тебя глобальный)
     if search:
         mask = df_display.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)
         df_display = df_display[mask]
 
-    # Ключ стабильный! Это важно, чтобы выбор не сбрасывался при вводе каждой буквы
-    table_key = f"table_{key}_{st.session_state.reset_counter}"
+    # Находим позиции уже выбранных товаров в текущем отображении
+    current_rows_to_check = [
+        i for i, idx in enumerate(df_display.index) 
+        if idx in st.session_state[selection_key]
+    ]
 
+    # Отрисовка таблицы
     sel = st.dataframe(
         df_display,
         use_container_width=True,
         hide_index=True,
         on_select="rerun",
         selection_mode="multi-row",
-        key=table_key
+        selection={"rows": current_rows_to_check}, # ЭТО ГЛАВНОЕ
+        key=f"table_{key}_{st.session_state.reset_counter}"
     )
 
-    # Получаем выбранные UUID напрямую из индексов
-    # sel['selection']['rows'] в новых версиях возвращает индексы строк, 
-    # поэтому мы берем их из отфильтрованного df_display
+    # ОБРАБОТКА ГАЛОЧЕК (Синхронизация)
     new_rows = sel.get("selection", {}).get("rows", [])
-    
-    # UUID тех строк, которые сейчас физически видны на экране
-    visible_uuids = set(df_display.index.tolist())
-    # UUID тех строк, на которых стоят галочки
-    currently_checked_uuids = set(df_display.iloc[new_rows].index.tolist())
+    currently_checked_uuids = set(df_display.iloc[new_rows].index)
+    visible_uuids = set(df_display.index)
 
-    # Синхронизация:
-    # 1. Добавляем в общую корзину то, что выбрали сейчас
-    for u in currently_checked_uuids:
-        st.session_state[selection_key].add(u)
-    
-    # 2. Убираем из корзины только если галочку сняли вручную с видимого товара
+    # Если товар на экране — обновляем его статус в памяти
     for u in visible_uuids:
-        if u not in currently_checked_uuids:
+        if u in currently_checked_uuids:
+            st.session_state[selection_key].add(u)
+        else:
             st.session_state[selection_key].discard(u)
+
+    # Твой код кнопок «Отгрузить» и «Удалить» дальше...
 
     # Итоговый список
     final_uuids = list(st.session_state[selection_key])
@@ -292,6 +297,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
