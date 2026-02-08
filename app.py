@@ -128,60 +128,36 @@ def render_table(storage_type, key):
     if selection_key not in st.session_state:
         st.session_state[selection_key] = set()
 
-    # Загружаем данные из БД
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
-    
     if df.empty:
         st.info(f"Склад {storage_type} пуст")
         return
 
-    # Принудительно делаем uuid индексом, чтобы Streamlit привязывал выбор к нему
-    df_indexed = df.set_index('uuid', drop=False)
-
-    # Фильтрация для поиска
+    # --- ХИТРАЯ СОРТИРОВКА ---
+    # Добавляем временную колонку: 1 если товар в поиске, 0 если нет
     if search:
-        df_display = df_indexed[df_indexed.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
-    else:
-        df_display = df_indexed
+        df['is_found'] = df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)
+        # Сортируем так, чтобы найденные (True) были вверху
+        df = df.sort_values(by='is_found', ascending=False).drop(columns=['is_found'])
 
-    # Рендерим таблицу
-    # Использование on_select="rerun" позволяет нам сразу ловить изменения
+    # Рендерим ОДНУ таблицу
     sel = st.dataframe(
-        df_display,
+        df,
         use_container_width=True,
         hide_index=True,
         on_select="rerun",
         selection_mode="multi-row",
-        key=f"table_{key}_{st.session_state.reset_counter}" 
+        key=f"table_{key}_{st.session_state.reset_counter}"
     )
 
-    # ПОЛУЧАЕМ ВЫБРАННЫЕ UUID (теперь Streamlit вернет именно их, так как они в индексе)
-    # Если в твоей версии Streamlit .get("selection").get("rows") возвращает числа,
-    # то мы берем их из df_display по порядку:
-    current_rows = sel.get("selection", {}).get("rows", [])
-    
-    # Синхронизация
-    if search:
-        # В режиме поиска: добавляем новые UUID в корзину
-        new_selected = set(df_display.iloc[current_rows]['uuid'].tolist())
-        for u in new_selected:
-            st.session_state[selection_key].add(u)
-        
-        # Убираем только те, что сейчас видны в поиске, но с которых сняли галочку
-        visible_now = set(df_display['uuid'].tolist())
-        for u in visible_now:
-            if u not in new_selected and u in st.session_state[selection_key]:
-                st.session_state[selection_key].remove(u)
-    else:
-        # В обычном режиме корзина полностью совпадает с выбором
-        st.session_state[selection_key] = set(df_display.iloc[current_rows]['uuid'].tolist())
+    # Получаем выбор
+    rows = sel.get("selection", {}).get("rows", [])
+    selected_uuids = set(df.iloc[rows]['uuid'].tolist())
 
-    # --- СПИСОК И КНОПКИ (Вернула их на место) ---
-    final_uuids = list(st.session_state[selection_key])
-    
-    if final_uuids:
-        st.divider()
-        st.subheader(f"✅ Выбрано для действий: {len(final_uuids)}")
+    # Сохраняем и показываем кнопки
+    if selected_uuids:
+        st.subheader(f"✅ Выбрано: {len(selected_uuids)}")
+        # ... тут твой стандартный код кнопок отгрузки из скриншотов 1000011873-74 ...
         
         # Показываем маленькую таблицу только с выбранными товарами, чтобы заказчик видел итог
         selected_view = df[df['uuid'].isin(final_uuids)]
@@ -312,6 +288,7 @@ with t5:
             st.dataframe(res[res["Тип"] == "ООО"], use_container_width=True, hide_index=True)
     else:
         st.info("Склад пуст")
+
 
 
 
