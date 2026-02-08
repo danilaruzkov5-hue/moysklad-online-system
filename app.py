@@ -136,12 +136,12 @@ def render_table(storage_type, key):
 
     table_key = f"table_{key}_{st.session_state.reset_counter}"
 
-    sel = st.data_editor(
+        sel = st.data_editor(
         df_display,
         use_container_width=True,
         hide_index=True,
-        on_select="rerun",
-        selection_mode="multi-row",
+        column_config={"uuid": None}, # Скрываем колонку uuid, если она мешает
+        num_rows="fixed",
         key=table_key
     )
 
@@ -278,6 +278,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
