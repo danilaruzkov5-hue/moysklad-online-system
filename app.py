@@ -123,61 +123,62 @@ def render_table(storage_type, key):
     if selection_key not in st.session_state:
         st.session_state[selection_key] = set()
 
-    # 1. Загрузка
+    # Загрузка данных
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
     if df.empty:
         st.info(f"Склад {storage_type} пуст")
         return
 
-    # Устанавливаем индекс
+    # Устанавливаем UUID как индекс для стабильности
     df = df.set_index('uuid', drop=False)
     df_display = df.copy()
 
-    # 2. Поиск
+    # Поиск
     if search:
         mask = df_display.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)
         df_display = df_display[mask]
 
-    # 3. Считаем индексы строк для галочек (важно: делаем их int)
+    # Считаем, какие строки выделить (номера строк)
     current_rows = [
-        int(i) for i, idx in enumerate(df_display.index) 
+        i for i, idx in enumerate(df_display.index) 
         if idx in st.session_state[selection_key]
     ]
 
-    # 4. Сама таблица
+    # САМА ТАБЛИЦА (Исправленный формат для 1.54.0)
     sel = st.dataframe(
         df_display,
         use_container_width=True,
         hide_index=True,
         on_select="rerun",
         selection_mode="multi-row",
-        selection={"rows": current_rows}, # Передаем рассчитанные позиции
+        # В новых версиях параметр selection передается так:
+        selection={"rows": current_rows},
         key=f"table_{key}_{st.session_state.reset_counter}"
     )
 
-    # 5. Синхронизация выбора
-    if sel and "selection" in sel:
-        new_rows = sel["selection"]["rows"]
-        visible_uuids = df_display.index.tolist()
-        
-        # UUID тех, кто реально отмечен галочкой сейчас
-        currently_checked = [df_display.iloc[i].name for i in new_rows]
-
-        # Обновляем состояние: если товар на экране, его статус берем из таблицы
-        for u in visible_uuids:
-            if u in currently_checked:
-                st.session_state[selection_key].add(u)
-            else:
-                st.session_state[selection_key].discard(u)
-
-    # 6. Кнопки (используем то, что накопили в памяти)
-    selected_list = list(st.session_state[selection_key])
+    # ОБРАБОТКА ВЫБОРА (Синхронизация)
+    # Используем безопасный метод get, чтобы не было ошибок если ничего не выбрано
+    selection_data = getattr(sel, "selection", {})
+    new_rows = selection_data.get("rows", [])
     
-    if selected_list:
-        st.write(f"✅ Выбрано товаров: {len(selected_list)}")
+    visible_uuids = df_display.index.tolist()
+    currently_checked = [df_display.iloc[i].name for i in new_rows]
+
+    for u in visible_uuids:
+        if u in currently_checked:
+            st.session_state[selection_key].add(u)
+        else:
+            st.session_state[selection_key].discard(u)
+
+    # КНОПКИ (используем итоговый список из памяти)
+    final_list = list(st.session_state[selection_key])
+    if final_list:
+        st.write(f"Выбрано товаров: {len(final_list)}")
         c1, c2 = st.columns(2)
         with c1:
-            if st.button(f"📦 Отгрузить ({len(selected_list)})", key=f"btn_ship_{key}"):
+            if st.button(f"Отгрузить ({len(final_list)})", key=f"sh_{key}"):
+                # Твоя логика отгрузки...
+                pass
                 with engine.connect() as conn:
                     for u in selected_list:
                         row = df.loc[u]
@@ -292,6 +293,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
