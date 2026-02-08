@@ -119,119 +119,97 @@ search = st.text_input("🔍 Быстрый поиск (Баркод / Арти�
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📦 Архив", "📊 Хранение", "🧾 Итого"])
 
 def render_table(storage_type, key):
+    # Корзина в памяти
     selection_key = f"selected_uuids_{key}"
     if selection_key not in st.session_state:
         st.session_state[selection_key] = set()
 
-    # 1. Загрузка данных
+    # Загрузила данные
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
+
     if df.empty:
         st.info(f"Склад {storage_type} пуст")
         return
 
-    # Устанавливаем UUID как индекс
+    # --- ВОТ ТУТ РЕШЕНИЕ ПРОБЛЕМЫ ---
+    # Делаем uuid индексом. Тогда Streamlit будет привязывать выбор к нему,
+    # а не к порядковому номеру строки на экране.
     df = df.set_index('uuid', drop=False)
-    df_display = df.copy()
 
-    # 2. Поиск
+    df_display = df.copy()
     if search:
         mask = df_display.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)
         df_display = df_display[mask]
 
-    # 3. ТАБЛИЦА — МЫ УБРАЛИ ПАРАМЕТР selection, ЧТОБЫ НЕ БЫЛО TypeError
+    # Ключ стабильный! Это важно, чтобы выбор не сбрасывался при вводе каждой буквы
+    table_key = f"table_{key}_{st.session_state.reset_counter}"
+
     sel = st.dataframe(
         df_display,
         use_container_width=True,
         hide_index=True,
         on_select="rerun",
         selection_mode="multi-row",
-        key=f"table_{key}_{st.session_state.reset_counter}"
+        key=table_key
     )
 
-    # 4. ОБРАБОТКА ВЫБОРА (UUID)
-    # Используем безопасный доступ к атрибуту selection
-    if sel is not None and hasattr(sel, 'selection'):
-        new_rows = sel.selection.get("rows", [])
-        visible_uuids = df_display.index.tolist()
-        currently_checked = [df_display.iloc[i].name for i in new_rows]
+    # Получаем выбранные UUID напрямую из индексов
+    # sel['selection']['rows'] в новых версиях возвращает индексы строк,
+    # поэтому мы берем их из отфильтрованного df_display
+    new_rows = sel.get("selection", {}).get("rows", [])
 
-        # Синхронизируем: если товар видим, берем его статус из таблицы
-        for u in visible_uuids:
-            if u in currently_checked:
-                st.session_state[selection_key].add(u)
-            else:
-                st.session_state[selection_key].discard(u)
-                
-    current_selection = list(st.session_state[selection_key])
-    
-    if current_selection:
-        st.write(f"📦 В памяти выбрано товаров: {len(current_selection)}")
+    # UUID тех строк, которые сейчас физически видны на экране
+    visible_uuids = set(df_display.index.tolist())
+    # UUID тех строк, на которых стоят галочки
+    currently_checked_uuids = set(df_display.iloc[new_rows].index.tolist())
+
+    # Синхронизация:
+    # 1. Добавляем в общую корзину то, что выбрали сейчас
+    for u in currently_checked_uuids:
+        st.session_state[selection_key].add(u)
+
+    # 2. Убираем из корзины только если галочку сняли вручную с видимого товара
+    for u in visible_uuids:
+        if u not in currently_checked_uuids:
+            st.session_state[selection_key].discard(u)
+
+    # Итоговый список
+    final_uuids = list(st.session_state[selection_key])
+    count = len(final_uuids)
+
+    if count > 0:
+        # Небольшая подсказка, чтобы ты видел, что выбор сохранен
+        st.caption(f"📍 В памяти сохранено товаров: {count}")
+
         c1, c2 = st.columns(2)
-        
-        with c1:
-            # Кнопка отгрузки
-            if st.button(f"Отгрузить ({len(current_selection)})", key=f"ship_btn_{key}"):
-                with engine.connect() as conn:
-                    for u in current_selection:
-                        # Получаем данные строки по UUID для архива
-                        row = df.loc[u]
-                        conn.execute(text("INSERT INTO archive (name, quantity, price, date, type, uuid) VALUES (:n, :q, :p, :d, :t, :u)"),
-                                     {"n": row['name'], "q": row['quantity'], "p": row['price'], "d": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "t": storage_type, "u": u})
-                        conn.execute(text("DELETE FROM stock WHERE uuid = :u"), {"u": u})
-                    conn.commit()
-                st.session_state[selection_key] = set() # Очищаем выбор
-                st.rerun()
-                
-        with c2:
-            # Та самая кнопка, которая выдавала NameError
-            if st.button(f"🗑️ Удалить ({len(current_selection)})", key=f"del_btn_{key}", type="primary"):
-                with engine.connect() as conn:
-                    for u in current_selection:
-                        conn.execute(text("DELETE FROM stock WHERE uuid = :u"), {"u": u})
-                    conn.commit()
-                st.session_state[selection_key] = set() # Очищаем выбор
-                st.rerun()
+        selected_df = df.loc[list(st.session_state[selection_key])]
 
-    else:
-        st.info(f"Склад {storage_type} пуст")
+        # Кнопки отгрузки (без изменений)
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            selected_df[['barcode', 'quantity', 'box_num']].to_excel(writer, index=False)
 
-with t1: render_table("ИП", "ip")
-with t2: render_table("ООО", "ooo")
-
-with t3:
-    arch_type = st.radio("Архив:", ["ИП", "ООО"], horizontal=True, key="arch_sel")
-    df_arch = pd.read_sql(text(f"SELECT * FROM archive WHERE type='{arch_type}'"), engine)
-
-    if not df_arch.empty:
-        arch_table_key = f"arch_table_{arch_type}_{st.session_state.reset_counter}"
-        sel_a = st.dataframe(df_arch, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key=arch_table_key)
-
-        # Экспорт всего архива
-        output_a = io.BytesIO()
-        with pd.ExcelWriter(output_a, engine='xlsxwriter') as writer:
-            df_arch.to_excel(writer, index=False, sheet_name='Архив')
-        st.download_button(f"📥 Скачать архив {arch_type}", output_a.getvalue(), f"archive_{arch_type}.xlsx")
-
-        idx_a = sel_a.get("selection", {}).get("rows", [])
-        if idx_a:
-            ca1, ca2 = st.columns(2)
-            if ca1.button(f"🔄 Вернуть на обратно ({len(idx_a)})", key=f"res_btn_{arch_type}"):
-                with engine.connect() as conn:
-                    for i in idx_a:
-                        r = df_arch.iloc[i]
-                        conn.execute(text("INSERT INTO stock SELECT uuid, name, article, barcode, quantity, box_num, type FROM archive WHERE uuid=:u"), {"u": r['uuid']})
-                        conn.execute(text("DELETE FROM archive WHERE uuid=:u"), {"u": r['uuid']})
+        if c1.download_button(f"📦 Отгрузить ({count})", data=output.getvalue(), file_name=f"ship_{storage_type}.xlsx", key=f"dl_{key}"):
+            with engine.connect() as conn:
+                for uuid in final_uuids:
+                    conn.execute(text("INSERT INTO archive SELECT *, :d FROM stock WHERE uuid=:u"), {"d": datetime.now().strftime("%d.%m %H:%M"), "u": uuid})
+                    conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": uuid})
                 conn.commit()
-                reset_selection()
-                st.rerun()
+            st.session_state[selection_key] = set()
+            reset_selection()
+            st.rerun()
 
-            if ca2.button(f"🔥 Очистить ({len(idx_a)})", key=f"clear_btn_{arch_type}"):
-                with engine.connect() as conn:
-                    for i in idx_a:
-                        conn.execute(text("DELETE FROM archive WHERE uuid=:u"), {"u": df_arch.iloc[i]['uuid']})
+        if c2.button(f"🗑️ Удалить ({count})", key=f"del_{key}"):
+            with engine.connect() as conn:
+                for uuid in final_uuids:
+                    conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": uuid})
                 conn.commit()
-                reset_selection()
-                st.rerun()
+            st.session_state[selection_key] = set()
+            reset_selection()
+            st.rerun()
+
+        if search:
+            st.info(f"💡 Всего выбрано (включая другие поиски): {count}")
     else: st.info("Архив пуст")
 
 with t4:
@@ -287,6 +265,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
