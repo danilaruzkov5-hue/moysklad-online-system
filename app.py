@@ -124,21 +124,81 @@ search = st.text_input("🔍 Быстрый поиск (Баркод / Арти�
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📜 Архив", "💰 Хранение", "📊 Итого"])
 
 def render_table(storage_type, key):
+    # 1. Инициализация корзины выбранных товаров
+    selection_key = f"selected_uuids_{key}"
+    if selection_key not in st.session_state:
+        st.session_state[selection_key] = set()
+
+    # 2. Загрузка данных из БД
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
-    if search:
-        df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
     
-    if not df.empty:
-        table_key = f"table_{key}_{st.session_state.reset_counter}"
-        sel = st.dataframe(df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key=table_key)
-        idx = sel.get("selection", {}).get("rows", [])
+    if df.empty:
+        st.info(f"Склад {storage_type} пуст")
+        return
+
+    # --- СЕКЦИЯ ПОИСКА (Появляется только если в поле поиска что-то вбито) ---
+    if search:
+        st.subheader("🔍 Найдено в поиске")
+        # Фильтруем данные по всем колонкам
+        df_search = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
         
-        if idx:
+        if not df_search.empty:
+            search_table_key = f"search_{key}_{st.session_state.reset_counter}"
+            sel_search = st.dataframe(
+                df_search,
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="multi-row",
+                key=search_table_key
+            )
+            
+            # Добавляем в корзину то, что выбрали в поиске
+            s_rows = sel_search.get("selection", {}).get("rows", [])
+            for i in s_rows:
+                st.session_state[selection_key].add(df_search.iloc[i]['uuid'])
+        else:
+            st.warning("По вашему запросу ничего не найдено")
+        st.divider()
+
+    # --- ОСНОВНОЙ СПИСОК (Всегда ниже) ---
+    st.subheader("📦 Весь список")
+    main_table_key = f"main_{key}_{st.session_state.reset_counter}"
+    
+    sel_main = st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="multi-row",
+        key=main_table_key
+    )
+
+    # Синхронизация: если поиска нет, корзина — это только то, что в таблице.
+    # Если поиск есть — добавляем к тому, что уже нашли.
+    m_rows = sel_main.get("selection", {}).get("rows", [])
+    current_main_uuids = set(df.iloc[m_rows]['uuid'].tolist())
+    
+    if not search:
+        st.session_state[selection_key] = current_main_uuids
+    else:
+        for u in current_main_uuids:
+            st.session_state[selection_key].add(u)
+
+    # 3. Итоговый список для кнопок (отгрузка / удаление)
+    final_uuids = list(st.session_state[selection_key])
+    
+    if final_uuids:
+        # Фильтруем основной DF, чтобы получить данные только выбранных товаров
+        selected_df = df[df['uuid'].isin(final_uuids)]
+        count = len(selected_df)
+        
+        if count > 0:
+            st.write(f"✅ Выбрано товаров: {count}")
             c1, c2 = st.columns(2)
             
-            # Подготовка Excel для отгрузки
-            selected_rows = df.iloc[idx].copy()
-            exp_df = selected_rows[['barcode', 'quantity', 'box_num']].copy()
+            # Далее идет твой блок с Excel (строки 170-180 на твоем фото)
+            exp_df = selected_df[['barcode', 'quantity', 'box_num']].copy()
             exp_df.columns = ["Баркод", "Кол-во", "Номер короба"]
             exp_df["ФИО"] = ""
             exp_df["Склад"] = storage_type
@@ -147,21 +207,23 @@ def render_table(storage_type, key):
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 exp_df.to_excel(writer, index=False, sheet_name='Отгрузка')
             
-            if c1.download_button(f"🚀 Отгрузить ({len(idx)})", data=output.getvalue(), file_name=f"shipment_{storage_type}.xlsx", key=f"dl_{key}"):
+            # Кнопка отгрузки
+            if c1.download_button(f"🚢 Отгрузить ({count})", data=output.getvalue(), file_name=f"shipment_{storage_type}.xlsx", key=f"dl_{key}"):
                 with engine.connect() as conn:
-                    for i in idx:
-                        u = df.iloc[i]['uuid']
+                    for u in final_uuids:
                         conn.execute(text("INSERT INTO archive SELECT *, :d FROM stock WHERE uuid=:u"), {"d": datetime.now().strftime("%d.%m %H:%M"), "u": u})
                         conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": u})
                     conn.commit()
+                st.session_state[selection_key] = set()
                 reset_selection()
                 st.rerun()
-
-            if c2.button(f"🗑️ Удалить ({len(idx)})", key=f"del_btn_{key}"):
+                # Кнопка удаления
+            if c2.button(f"🗑️ Удалить ({count})", key=f"del_{key}"):
                 with engine.connect() as conn:
-                    for i in idx:
-                        conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": df.iloc[i]['uuid']})
+                    for u in final_uuids:
+                        conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": u})
                     conn.commit()
+                st.session_state[selection_key] = set()
                 reset_selection()
                 st.rerun()
     else: st.info(f"Склад {storage_type} пуст")
@@ -259,6 +321,7 @@ with t5:
             st.dataframe(res[res["Тип"] == "ООО"], use_container_width=True, hide_index=True)
     else:
         st.info("Склад пуст")
+
 
 
 
