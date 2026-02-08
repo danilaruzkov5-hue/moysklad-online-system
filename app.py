@@ -191,13 +191,15 @@ def render_table(storage_type, key):
     if search:
         st.info(f"💡 Всего выбрано (включая другие поиски): {count}")
 
+# Убедись, что эти строки прижаты к левому краю
 with t1:
     render_table("ИП", "ip")
 with t2:
     render_table("ООО", "ooo")
-        with t3:
-            arch_type = st.radio("Архив:", ["ИП", "ООО"], horizontal=True, key="arch_sel")
-            df_arch = pd.read_sql(text(f"SELECT * FROM archive WHERE type='{arch_type}'"), engine)
+
+with t3:
+    arch_type = st.radio("Архив:", ["ИП", "ООО"], horizontal=True, key="arch_sel")
+    # ... и так далее
 
     if not df_arch.empty:
         arch_table_key = f"arch_table_{arch_type}_{st.session_state.reset_counter}"
