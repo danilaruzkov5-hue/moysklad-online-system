@@ -142,15 +142,19 @@ def render_table(storage_type, key):
     ]
 
     # Отрисовка таблицы
-    sel = st.dataframe(
-        df_display,
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="multi-row",
-        selection={"rows": current_rows_to_check}, # ЭТО ГЛАВНОЕ
-        key=f"table_{key}_{st.session_state.reset_counter}"
-    )
+    # Убедимся, что передаем именно список целых чисел
+rows_to_select = [int(i) for i in current_rows_to_check]
+
+sel = st.dataframe(
+    df_display,
+    use_container_width=True,
+    hide_index=True,
+    on_select="rerun",
+    selection_mode="multi-row",
+    # Важно: добавляем проверку на наличие ключа
+    selection={"rows": rows_to_select},
+    key=f"table_{key}_{st.session_state.reset_counter}"
+)
 
     # ОБРАБОТКА ГАЛОЧЕК (Синхронизация)
     new_rows = sel.get("selection", {}).get("rows", [])
