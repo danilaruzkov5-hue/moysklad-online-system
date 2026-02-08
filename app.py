@@ -28,21 +28,37 @@ def check_and_log_daily():
             res = conn.execute(text("SELECT 1 FROM daily_storage_logs WHERE log_date = :d"), {"d": today_str}).fetchone()
             
             if not res:
-                # Если нет — считаем и записываем
+                # Читаем текущий сток
                 df = pd.read_sql(text("SELECT * FROM stock"), engine)
-                b_ip = len(df[df['type'] == 'ИП'])
-                b_ooo = len(df[df['type'] == '000'])
                 
-                # 16 кор = 1 паллет
+                # Считаем короба раздельно
+                b_ip = len(df[df['type'] == 'ИП'])
+                b_ooo = len(df[df['type'] == 'ООО'])
+                
+                # Считаем паллеты (16 кор = 1 паллет) раздельно
                 p_ip = math.ceil(b_ip / 16)
                 p_ooo = math.ceil(b_ooo / 16)
                 
+                # Суммы к начислению
+                c_ip = p_ip * 50
+                c_ooo = p_ooo * 50
+                
+                # Итоговые значения
+                t_boxes = b_ip + b_ooo
+                t_pallets = p_ip + p_ooo
+                t_cost = c_ip + c_ooo
+
                 # Записываем в базу
+                # Убедись, что порядок колонок совпадает с твоей структурой таблицы!
                 conn.execute(text('''INSERT INTO daily_storage_logs 
-                    VALUES (:d, :bi, :pi, :ci, :bo, :po, :co, :tb, :tp, :tc)'''), 
-                    {"d": today_str, "bi": b_ip, "pi": p_ip, "ci": p_ip*50,
-                     "bo": b_ooo, "po": p_ooo, "co": p_ooo*50,
-                     "tb": b_ip+b_ooo, "tp": p_ip+p_ooo, "tc": (p_ip+p_ooo)*50})
+                    (log_date, bi, pi, ci, bo, po, co, itb, itp, itc) 
+                    VALUES (:d, :bi, :pi, :ci, :bo, :po, :co, :itb, :itp, :itc)'''), 
+                    {
+                        "d": today_str, 
+                        "bi": b_ip, "pi": p_ip, "ci": c_ip,
+                        "bo": b_ooo, "po": p_ooo, "co": c_ooo,
+                        "itb": t_boxes, "itp": t_pallets, "itc": t_cost
+                    })
                 conn.commit()
 
 # Обязательно запускаем эту функцию!
@@ -243,6 +259,7 @@ with t5:
             st.dataframe(res[res["Тип"] == "ООО"], use_container_width=True, hide_index=True)
     else:
         st.info("Склад пуст")
+
 
 
 
