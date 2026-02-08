@@ -223,9 +223,23 @@ with t4:
 with t5:
     df_all = pd.read_sql(text("SELECT * FROM stock"), engine)
     if not df_all.empty:
+        # Группируем, сохраняя колонку 'type' (ИП/ООО)
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
-        res.columns = ["Тип", "Баркод", "Общее количество"]
-        st.dataframe(res, use_container_width=True, hide_index=True)
+        res.columns = ["Тип", "Штрихкод", "Общее количество"]
+        
+        # Опционально: можно выводить две разные таблицы для красоты
+        col_ip, col_ooo = st.columns(2)
+        
+        with col_ip:
+            st.markdown("### 🏢 ИП")
+            st.dataframe(res[res["Тип"] == "ИП"], use_container_width=True, hide_index=True)
+            
+        with col_ooo:
+            st.markdown("### 🏢 ООО")
+            st.dataframe(res[res["Тип"] == "ООО"], use_container_width=True, hide_index=True)
+    else:
+        st.info("Склад пуст")
+
 
 
 
