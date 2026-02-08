@@ -191,8 +191,7 @@ def render_table(storage_type, key):
                     conn.commit()
                 st.session_state[selection_key] = set() # Очищаем выбор
                 st.rerun()
-            if search:
-                st.info(f"💡 Всего выбрано (включая другие поиски): {count}")
+
     else:
         st.info(f"Склад {storage_type} пуст")
 
@@ -288,6 +287,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
