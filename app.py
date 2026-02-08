@@ -120,13 +120,15 @@ t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📦 Архив", "�
 
 def render_table(storage_type, key):
     selection_key = f"selected_uuids_{key}"
-    
+    if selection_key not in st.session_state:
+        st.session_state[selection_key] = set()
+
     # Загружаем данные и ставим индекс по uuid
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
     if df.empty:
         st.info(f"Склад {storage_type} пуст")
         return
-    
+
     df = df.set_index('uuid', drop=False)
     df_display = df.copy()
 
@@ -142,26 +144,23 @@ def render_table(storage_type, key):
     ]
 
     # Отрисовка таблицы
-    # Убедимся, что передаем именно список целых чисел
-rows_to_select = [int(i) for i in current_rows_to_check]
+    sel = st.dataframe(
+        df_display,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="multi-row",
+        selection={"rows": current_rows_to_check},
+        key=f"table_{key}_{st.session_state.reset_counter}"
+    )
 
-sel = st.dataframe(
-    df_display,
-    use_container_width=True,
-    hide_index=True,
-    on_select="rerun",
-    selection_mode="multi-row",
-    # Важно: добавляем проверку на наличие ключа
-    selection={"rows": rows_to_select},
-    key=f"table_{key}_{st.session_state.reset_counter}"
-)
-
-    # ОБРАБОТКА ГАЛОЧЕК (Синхронизация)
+    # ОБРАБОТКА ВЫБОРА (Внимательно с отступами тут!)
     new_rows = sel.get("selection", {}).get("rows", [])
-    currently_checked_uuids = set(df_display.iloc[new_rows].index)
+    
+    # Синхронизация: работаем только с тем, что видим на экране
     visible_uuids = set(df_display.index)
+    currently_checked_uuids = set(df_display.iloc[new_rows].index) if new_rows else set()
 
-    # Если товар на экране — обновляем его статус в памяти
     for u in visible_uuids:
         if u in currently_checked_uuids:
             st.session_state[selection_key].add(u)
@@ -301,6 +300,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
