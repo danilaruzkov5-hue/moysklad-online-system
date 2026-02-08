@@ -123,6 +123,7 @@ def render_table(storage_type, key):
     if selection_key not in st.session_state:
         st.session_state[selection_key] = set()
 
+    # Загрузка
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
     if df.empty:
         st.info(f"Склад {storage_type} пуст")
@@ -131,45 +132,38 @@ def render_table(storage_type, key):
     df = df.set_index('uuid', drop=False)
     df_display = df.copy()
 
+    # Поиск
     if search:
         mask = df_display.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)
         df_display = df_display[mask]
 
-    # Считаем индексы для галочек
-    current_rows = [i for i, idx in enumerate(df_display.index) if idx in st.session_state[selection_key]]
-
-    # Таблица (теперь версия будет правильная!)
+    # Рендерим таблицу без проблемного параметра
     sel = st.dataframe(
         df_display,
         use_container_width=True,
         hide_index=True,
         on_select="rerun",
         selection_mode="multi-row",
-        selection={"rows": current_rows},
         key=f"table_{key}_{st.session_state.reset_counter}"
     )
 
-    # Синхронизация выбора
+    # ЛОГИКА СОХРАНЕНИЯ (UUID)
     if sel and "selection" in sel:
         new_rows = sel["selection"]["rows"]
-        visible_uuids = set(df_display.index)
-        currently_checked = set(df_display.iloc[new_rows].index) if new_rows else set()
+        visible_uuids = set(df_display.index.tolist())
+        currently_checked = set(df_display.iloc[new_rows].index.tolist()) if new_rows else set()
 
+        # Обновляем сессию: добавляем то, что выбрали, убираем то, с чего сняли галочку
+        for u in currently_checked:
+            st.session_state[selection_key].add(u)
         for u in visible_uuids:
-            if u in currently_checked:
-                st.session_state[selection_key].add(u)
-            else:
+            if u not in currently_checked:
                 st.session_state[selection_key].discard(u)
 
-    # Твой код кнопок «Отгрузить» и «Удалить» дальше...
-
-    # Итоговый список
-    final_uuids = list(st.session_state[selection_key])
-    count = len(final_uuids)
-
+    # Показываем, сколько реально выбрано (даже если поиск пустой)
+    count = len(st.session_state[selection_key])
     if count > 0:
-        # Небольшая подсказка, чтобы ты видел, что выбор сохранен
-        st.caption(f"📍 В памяти сохранено товаров: {count}")
+        st.info(f"✅ Выбрано товаров (всего): {count}")
         
         c1, c2 = st.columns(2)
         selected_df = df.loc[list(st.session_state[selection_key])]
@@ -294,6 +288,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
