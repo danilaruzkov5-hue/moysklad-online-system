@@ -161,31 +161,35 @@ def render_table(storage_type, key):
                 st.session_state[selection_key].add(u)
             else:
                 st.session_state[selection_key].discard(u)
-
-    # 5. КНОПКИ (используем нашу "корзину" из памяти)
-    final_list = list(st.session_state[selection_key])
-    if final_list:
-        st.write(f"📦 В памяти выбрано товаров: {len(final_list)}")
+                
+    current_selection = list(st.session_state[selection_key])
+    
+    if current_selection:
+        st.write(f"📦 В памяти выбрано товаров: {len(current_selection)}")
         c1, c2 = st.columns(2)
+        
         with c1:
-            if st.button(f"Отгрузить ({len(final_list)})", key=f"ship_{key}"):
+            # Кнопка отгрузки
+            if st.button(f"Отгрузить ({len(current_selection)})", key=f"ship_btn_{key}"):
                 with engine.connect() as conn:
-                    for u in final_list:
-                        # Твоя логика INSERT и DELETE
+                    for u in current_selection:
+                        # Получаем данные строки по UUID для архива
                         row = df.loc[u]
                         conn.execute(text("INSERT INTO archive (name, quantity, price, date, type, uuid) VALUES (:n, :q, :p, :d, :t, :u)"),
                                      {"n": row['name'], "q": row['quantity'], "p": row['price'], "d": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "t": storage_type, "u": u})
                         conn.execute(text("DELETE FROM stock WHERE uuid = :u"), {"u": u})
                     conn.commit()
-                st.session_state[selection_key] = set()
+                st.session_state[selection_key] = set() # Очищаем выбор
                 st.rerun()
+                
         with c2:
-            if st.button(f"🗑️ Удалить ({len(selected_list)})", key=f"btn_del_{key}", type="primary"):
+            # Та самая кнопка, которая выдавала NameError
+            if st.button(f"🗑️ Удалить ({len(current_selection)})", key=f"del_btn_{key}", type="primary"):
                 with engine.connect() as conn:
-                    for u in selected_list:
+                    for u in current_selection:
                         conn.execute(text("DELETE FROM stock WHERE uuid = :u"), {"u": u})
                     conn.commit()
-                st.session_state[selection_key] = set()
+                st.session_state[selection_key] = set() # Очищаем выбор
                 st.rerun()
             if search:
                 st.info(f"💡 Всего выбрано (включая другие поиски): {count}")
@@ -284,6 +288,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
