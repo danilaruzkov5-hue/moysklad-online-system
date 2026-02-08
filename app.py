@@ -18,7 +18,7 @@ for key in ["ip", "ooo", "arch"]:
 # --- БАЗА ДАННЫХ ---
 DB_URL = st.secrets.get("DB_URL", "sqlite:///warehouse.db")
 engine = create_engine(DB_URL)
-
+st.write(st.__version__)
 # --- ВСТАВЛЯЙ ПРЯМО СЮДА ---
 def check_and_log_daily():
     now = datetime.now()
@@ -123,23 +123,20 @@ def render_table(storage_type, key):
     if selection_key not in st.session_state:
         st.session_state[selection_key] = set()
 
-    # Загрузка
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
-    if df.empty:
-        st.info(f"Склад {storage_type} пуст")
-        return
+    if df.empty: return
 
     df = df.set_index('uuid', drop=False)
-    df_display = df.copy()
 
-    # Поиск
+    # Вместо удаления строк, мы их просто сортируем: 
+    # товары, подходящие под поиск, будут наверху
     if search:
-        mask = df_display.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)
-        df_display = df_display[mask]
+        df['is_match'] = df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)
+        df = df.sort_values(by='is_match', ascending=False).drop(columns=['is_match'])
 
-    # Рендерим таблицу без проблемного параметра
+    # Рисуем таблицу БЕЗ параметра selection
     sel = st.dataframe(
-        df_display,
+        df,
         use_container_width=True,
         hide_index=True,
         on_select="rerun",
@@ -147,21 +144,12 @@ def render_table(storage_type, key):
         key=f"table_{key}_{st.session_state.reset_counter}"
     )
 
-    # ЛОГИКА СОХРАНЕНИЯ (UUID)
+    # Сохраняем выбор по UUID
     if sel and "selection" in sel:
-        new_rows = sel["selection"]["rows"]
-        visible_uuids = set(df_display.index.tolist())
-        currently_checked = set(df_display.iloc[new_rows].index.tolist()) if new_rows else set()
-
-        # Обновляем сессию: добавляем то, что выбрали, убираем то, с чего сняли галочку
-        for u in currently_checked:
-            st.session_state[selection_key].add(u)
-        for u in visible_uuids:
-            if u not in currently_checked:
-                st.session_state[selection_key].discard(u)
-
-    # Показываем, сколько реально выбрано (даже если поиск пустой)
-    count = len(st.session_state[selection_key])
+        indices = sel["selection"]["rows"]
+        # Мы берем UUID из исходного DF по индексам Стримлита
+        current_uuids = df.iloc[indices].index.tolist()
+        st.session_state[selection_key] = set(current_uuids)
     if count > 0:
         st.info(f"✅ Выбрано товаров (всего): {count}")
         
@@ -288,6 +276,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
