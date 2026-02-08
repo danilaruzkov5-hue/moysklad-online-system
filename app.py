@@ -124,76 +124,98 @@ search = st.text_input("🔍 Быстрый поиск (Баркод / Арти�
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📜 Архив", "💰 Хранение", "📊 Итого"])
 
 def render_table(storage_type, key):
+    # Хранилище для накопленных UUID
     selection_key = f"selected_uuids_{key}"
     if selection_key not in st.session_state:
         st.session_state[selection_key] = set()
 
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
-    if df.empty:
-        st.info(f"Склад {storage_type} пуст")
-        return
-
-    # --- ХИТРАЯ СОРТИРОВКА ---
-    # Добавляем временную колонку: 1 если товар в поиске, 0 если нет
+    
+    df_display = df.copy()
     if search:
-        df['is_found'] = df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)
-        # Сортируем так, чтобы найденные (True) были вверху
-        df = df.sort_values(by='is_found', ascending=False).drop(columns=['is_found'])
+        df_display = df_display[df_display.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
 
-    # Рендерим ОДНУ таблицу
-    sel = st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="multi-row",
-        key=f"table_{key}_{st.session_state.reset_counter}"
-    )
+    if not df_display.empty:
+        table_key = f"table_{key}_{st.session_state.reset_counter}"
 
-    # Получаем выбор
-    rows = sel.get("selection", {}).get("rows", [])
-    selected_uuids = set(df.iloc[rows]['uuid'].tolist())
+        # Рендерим таблицу
+        sel = st.dataframe(
+            df_display,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="multi-row",
+            key=table_key
+        )
 
-    # Сохраняем и показываем кнопки
-    if selected_uuids:
-        st.subheader(f"✅ Выбрано: {len(selected_uuids)}")
-        # ... тут твой стандартный код кнопок отгрузки из скриншотов 1000011873-74 ...
-        
-        # Показываем маленькую таблицу только с выбранными товарами, чтобы заказчик видел итог
-        selected_view = df[df['uuid'].isin(final_uuids)]
-        st.dataframe(selected_view[['name', 'barcode', 'box_num']], use_container_width=True, hide_index=True)
+        # Получаем выбранные строки из текущего отображения
+        current_rows = sel.get("selection", {}).get("rows", [])
 
-        c1, c2 = st.columns(2)
-        
-        # Подготовка данных для Excel
-        exp_df = selected_view[['barcode', 'quantity', 'box_num']].copy()
-        exp_df.columns = ["Баркод", "Кол-во", "Номер короба"]
-        exp_df["ФИО"] = ""
-        exp_df["Склад"] = storage_type
-        
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            exp_df.to_excel(writer, index=False, sheet_name='Отгрузка')
+        # Безопасно извлекаем UUID текущего выбора
+        try:
+            current_uuids = set(df_display.iloc[current_rows]['uuid'].tolist())
+        except IndexError:
+            # Если индексы "сломались" при переключении поиска, просто сбрасываем текущий цикл
+            current_uuids = set()
 
-        if c1.download_button(f"🚢 Отгрузить ({len(final_uuids)})", data=output.getvalue(), file_name=f"ship_{storage_type}.xlsx", key=f"btn_ship_{key}"):
-            with engine.connect() as conn:
-                for u in final_uuids:
-                    conn.execute(text("INSERT INTO archive SELECT *, :d FROM stock WHERE uuid=:u"), {"d": datetime.now().strftime("%d.%m %H:%M"), "u": u})
-                    conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": u})
-                conn.commit()
-            st.session_state[selection_key] = set()
-            reset_selection()
-            st.rerun()
+        # Логика синхронизации
+        visible_uuids = set(df_display['uuid'].tolist())
 
-        if c2.button(f"🗑️ Удалить ({len(final_uuids)})", key=f"btn_del_{key}"):
-            with engine.connect() as conn:
-                for u in final_uuids:
-                    conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": u})
-                conn.commit()
-            st.session_state[selection_key] = set()
-            reset_selection()
-            st.rerun()
-    else: st.info(f"Склад {storage_type} пуст")
+        if search:
+            # Добавляем в общую корзину то, что выбрали в поиске
+            for uid in current_uuids:
+                st.session_state[selection_key].add(uid)
+            # Убираем из корзины только те, что видны в поиске, но с которых сняли галочку
+            for uid in visible_uuids:
+                if uid not in current_uuids:
+                    st.session_state[selection_key].discard(uid)
+        else:
+            # Если поиска нет, корзина — это то, что выбрано в таблице
+            st.session_state[selection_key] = current_uuids
+
+        # Итоговый список для действий
+        final_selected_uuids = list(st.session_state[selection_key])
+
+        if final_selected_uuids:
+            # Фильтруем основной df по накопленным UUID
+            selected_df = df[df['uuid'].isin(final_selected_uuids)]
+            count = len(selected_df)
+
+            if count > 0:
+                c1, c2 = st.columns(2)
+
+                # Подготовка Excel
+                exp_df = selected_df[['barcode', 'quantity', 'box_num']].copy()
+                exp_df.columns = ["Баркод", "Кол-во", "Номер короба"]
+                exp_df["ФИО"] = ""
+                exp_df["Склад"] = storage_type
+
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    exp_df.to_excel(writer, index=False, sheet_name='Отгрузка')
+
+                if c1.download_button(f"🚢 Отгрузить ({count})", data=output.getvalue(), file_name=f"shipment_{storage_type}.xlsx", key=f"dl_{key}"):
+                    with engine.connect() as conn:
+                        for uid in final_selected_uuids:
+                            conn.execute(text("INSERT INTO archive SELECT *, :d FROM stock WHERE uuid=:u"), {"d": datetime.now().strftime("%d.%m %H:%M"), "u": uid})
+                            conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": uid})
+                        conn.commit()
+                    st.session_state[selection_key] = set()
+                    reset_selection()
+                    st.rerun()
+
+                if c2.button(f"🗑️ Удалить ({count})", key=f"del_btn_{key}"):
+                    with engine.connect() as conn:
+                        for uid in final_selected_uuids:
+                            conn.execute(text("DELETE FROM stock WHERE uuid=:u"), {"u": uid})
+                        conn.commit()
+                    st.session_state[selection_key] = set()
+                    reset_selection()
+                    st.rerun()
+                    if search:
+                        st.info(f"💡 Всего выбрано (включая другие поиски): {count}")
+    else:
+        st.info(f"Склад {storage_type} пуст")
 
 with t1: render_table("ИП", "ip")
 with t2: render_table("ООО", "ooo")
@@ -288,6 +310,7 @@ with t5:
             st.dataframe(res[res["Тип"] == "ООО"], use_container_width=True, hide_index=True)
     else:
         st.info("Склад пуст")
+
 
 
 
