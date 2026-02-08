@@ -124,71 +124,68 @@ search = st.text_input("🔍 Быстрый поиск (Баркод / Арти�
 t1, t2, t3, t4, t5 = st.tabs(["🏠 ИП", "🏢 ООО", "📜 Архив", "💰 Хранение", "📊 Итого"])
 
 def render_table(storage_type, key):
-    # 1. Инициализация корзины выбранных товаров
     selection_key = f"selected_uuids_{key}"
     if selection_key not in st.session_state:
         st.session_state[selection_key] = set()
 
-    # 2. Загрузка данных из БД
     df = pd.read_sql(text(f"SELECT * FROM stock WHERE type='{storage_type}'"), engine)
-    
     if df.empty:
         st.info(f"Склад {storage_type} пуст")
         return
 
-    # --- СЕКЦИЯ ПОИСКА (Появляется только если в поле поиска что-то вбито) ---
+    # --- ПОИСК ---
     if search:
         st.subheader("🔍 Найдено в поиске")
-        # Фильтруем данные по всем колонкам
         df_search = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
         
         if not df_search.empty:
-            search_table_key = f"search_{key}_{st.session_state.reset_counter}"
+            # Таблица поиска
             sel_search = st.dataframe(
                 df_search,
                 use_container_width=True,
                 hide_index=True,
                 on_select="rerun",
                 selection_mode="multi-row",
-                key=search_table_key
+                key=f"search_{key}_{st.session_state.reset_counter}"
             )
             
-            # Добавляем в корзину то, что выбрали в поиске
+            # Обновляем корзину UUID на основе выбора в поиске
             s_rows = sel_search.get("selection", {}).get("rows", [])
-            for i in s_rows:
-                st.session_state[selection_key].add(df_search.iloc[i]['uuid'])
+            selected_in_search = set(df_search.iloc[s_rows]['uuid'].tolist())
+            
+            # Логика: добавляем то, чего нет, но не затираем старое из основного списка
+            for u in selected_in_search:
+                st.session_state[selection_key].add(u)
         else:
-            st.warning("По вашему запросу ничего не найдено")
+            st.warning("Ничего не найдено")
         st.divider()
 
-    # --- ОСНОВНОЙ СПИСОК (Всегда ниже) ---
+    # --- ОСНОВНОЙ СПИСОК ---
     st.subheader("📦 Весь список")
-    main_table_key = f"main_{key}_{st.session_state.reset_counter}"
     
+    # ВАЖНЫЙ МОМЕНТ: Находим индексы строк в основном DF, чьи UUID есть в корзине
+    initial_selection = df[df['uuid'].isin(st.session_state[selection_key])].index.tolist()
+
     sel_main = st.dataframe(
         df,
         use_container_width=True,
         hide_index=True,
         on_select="rerun",
         selection_mode="multi-row",
-        key=main_table_key
+        # Передаем найденные индексы, чтобы галочки проставились сами
+        selection=initial_selection, 
+        key=f"main_{key}_{st.session_state.reset_counter}"
     )
 
-    # Синхронизация: если поиска нет, корзина — это только то, что в таблице.
-    # Если поиск есть — добавляем к тому, что уже нашли.
+    # Синхронизация: обновляем корзину UUID на основе выбора в основной таблице
     m_rows = sel_main.get("selection", {}).get("rows", [])
-    current_main_uuids = set(df.iloc[m_rows]['uuid'].tolist())
-    
-    if not search:
-        st.session_state[selection_key] = current_main_uuids
-    else:
-        for u in current_main_uuids:
-            st.session_state[selection_key].add(u)
+    st.session_state[selection_key] = set(df.iloc[m_rows]['uuid'].tolist())
 
-    # 3. Итоговый список для кнопок (отгрузка / удаление)
+    # --- ДЕЙСТВИЯ (Кнопки) ---
     final_uuids = list(st.session_state[selection_key])
-    
     if final_uuids:
+        # Далее твой код с кнопками Отгрузить/Удалить без изменений...
+        # Используй final_uuids для фильтрации и выполнения SQL-запросов
         # Фильтруем основной DF, чтобы получить данные только выбранных товаров
         selected_df = df[df['uuid'].isin(final_uuids)]
         count = len(selected_df)
@@ -321,6 +318,7 @@ with t5:
             st.dataframe(res[res["Тип"] == "ООО"], use_container_width=True, hide_index=True)
     else:
         st.info("Склад пуст")
+
 
 
 
