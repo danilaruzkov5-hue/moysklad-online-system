@@ -191,35 +191,39 @@ with t3:
 with t4:
     st.subheader("📦 Текущий расчет (на данный момент)")
     
-    # Считаем то, что лежит в stock прямо сейчас
+    # Загружаем актуальные данные из базы
     df_now = pd.read_sql(text("SELECT * FROM stock"), engine)
     
     if not df_now.empty:
+        # Считаем количество коробов отдельно
         b_ip = len(df_now[df_now['type'] == 'ИП'])
-        b_ooo = len(df_now[df_now['type'] == '000'])
-        p_ip, p_ooo = math.ceil(b_ip/16), math.ceil(b_ooo/16)
+        b_ooo = len(df_now[df_now['type'] == 'ООО'])
         
-        # Показываем текущие цифры
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Коробов (ИП/ООО)", f"{b_ip} / {b_ooo}")
-        col2.metric("Паллет всего", p_ip + p_ooo)
-        col3.metric("Итого к начислению", f"{(p_ip + p_ooo) * 50} ₽")
+        # Считаем паллеты (16 кор = 1 паллет) отдельно для каждого
+        p_ip = math.ceil(b_ip / 16)
+        p_ooo = math.ceil(b_ooo / 16)
+        
+        # Создаем две колонки для визуального разделения
+        col_ip, col_ooo = st.columns(2)
+        
+        with col_ip:
+            st.markdown("### 🏢 ИП")
+            st.metric("Коробов (ИП)", b_ip)
+            st.metric("Паллет (ИП)", p_ip)
+            st.metric("К начислению (ИП)", f"{p_ip * 50} ₽")
+            
+        with col_ooo:
+            st.markdown("### 🏢 ООО")
+            st.metric("Коробов (ООО)", b_ooo)
+            st.metric("Паллет (ООО)", p_ooo)
+            st.metric("К начислению (ООО)", f"{p_ooo * 50} ₽")
+            
+        st.divider()
+        # Общий итог по обеим организациям
+        total_sum = (p_ip + p_ooo) * 50
+        st.metric("ОБЩИЙ ИТОГ к начислению", f"{total_sum} ₽")
     else:
-        st.write("Склад пуст")
-
-    st.divider()
-    
-    st.subheader("📊 История начислений (архив 23:00)")
-    try:
-        history_df = pd.read_sql("SELECT * FROM daily_storage_logs ORDER BY log_date DESC", engine)
-        if not history_df.empty:
-            history_df.columns = ["Дата", "Кор. ИП", "Пал. ИП", "₽ ИП", "Кор. ООО", "Пал. ООО", "₽ ООО", "Всего кор.", "Всего пал.", "Итого ₽"]
-            st.dataframe(history_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("История пуста. Первая запись в архиве появится сегодня в 23:00.")
-    except Exception:
-        st.warning("Таблица истории еще не создана.")
-
+        st.info("Склад пуст")
 with t5:
     df_all = pd.read_sql(text("SELECT * FROM stock"), engine)
     if not df_all.empty:
@@ -239,6 +243,7 @@ with t5:
             st.dataframe(res[res["Тип"] == "ООО"], use_container_width=True, hide_index=True)
     else:
         st.info("Склад пуст")
+
 
 
 
