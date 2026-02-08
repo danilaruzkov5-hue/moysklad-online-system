@@ -18,7 +18,6 @@ for key in ["ip", "ooo", "arch"]:
 # --- БАЗА ДАННЫХ ---
 DB_URL = st.secrets.get("DB_URL", "sqlite:///warehouse.db")
 engine = create_engine(DB_URL)
-st.write(st.__version__)
 # --- ВСТАВЛЯЙ ПРЯМО СЮДА ---
 def check_and_log_daily():
     now = datetime.now()
@@ -60,15 +59,6 @@ def init_db():
         conn.commit()
 
 init_db()
-# Инициализация корзин для выбора, если их еще нет
-if "selected_uuids_ip" not in st.session_state:
-    st.session_state["selected_uuids_ip"] = set()
-
-if "selected_uuids_ooo" not in st.session_state:
-    st.session_state["selected_uuids_ooo"] = set()
-
-if "selected_uuids_arch" not in st.session_state:
-    st.session_state["selected_uuids_arch"] = set()
 
 if "reset_counter" not in st.session_state:
     st.session_state.reset_counter = 0
@@ -265,6 +255,7 @@ with t5:
         res = df_all.groupby(["type", "barcode"])["quantity"].sum().reset_index()
         res.columns = ["Тип", "Баркод", "Общее количество"]
         st.dataframe(res, use_container_width=True, hide_index=True)
+
 
 
 
